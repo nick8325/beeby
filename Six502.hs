@@ -196,9 +196,11 @@ indirectY k =
   peek (register Y) $ \y ->
   k (index addr y)
 
+{-# INLINABLE cpu #-}
 cpu :: Program program => program
 cpu = fetch decode
-  where -- LDA
+  where {-# INLINE decode #-}
+        -- LDA
         decode 0xa9 = tick 2 $ imm (ld A)
         decode 0xa5 = tick 3 $ zp ldaMem
         decode 0xb5 = tick 4 $ zpRel X ldaMem
@@ -406,28 +408,39 @@ cpu = fetch decode
         -- RTI
         decode 0x40 = tick 6 $ rti
 
+        {-# INLINE ldaMem #-}
         ldaMem = ldMem A
+        {-# INLINE ldxMem #-}
         ldxMem = ldMem X
+        {-# INLINE ldyMem #-}
         ldyMem = ldMem Y
+        {-# INLINE ldMem #-}
         ldMem r addr = peek (memory addr) (ld r)
+        {-# INLINE ld #-}
         ld r v =
           poke (register r) v $
           zeroNeg v $
           done
+        {-# INLINE sta #-}
         sta = st A
+        {-# INLINE stx #-}
         stx = st X
+        {-# INLINE sty #-}
         sty = st Y
+        {-# INLINE st #-}
         st r addr =
           peek (register r) $ \x ->
           poke (memory addr) x $
           done
           
+        {-# INLINE transfer #-}
         transfer r1 r2 =
           peek (register r1) $ \x ->
           poke (register r2) x $
           zeroNeg x $
           done
 
+        {-# INLINE php #-}
         php break k=
           flag Negative $ \b7 ->
           flag Overflow $ \b6 ->
@@ -444,6 +457,7 @@ cpu = fetch decode
                 oneBit 6 b6 `or_`
                 oneBit 7 b7) $
           k
+        {-# INLINE plp #-}
         plp k =
           pop $ \x ->
           setFlag Negative (selectBit 7 x) $
@@ -454,13 +468,16 @@ cpu = fetch decode
           setFlag Carry (selectBit 0 x) $
           k
 
+        {-# INLINE accMem #-}
         accMem op addr = peek (memory addr) (acc op)
+        {-# INLINE acc #-}
         acc op x =
           peek (register A) $ \y ->
           poke (register A) (x `op` y) $
           zeroNeg (x `op` y) $
           done
 
+        {-# INLINE bitTest #-}
         bitTest addr =
           peek (register A) $ \x ->
           peek (memory addr) $ \y ->
@@ -469,11 +486,14 @@ cpu = fetch decode
           setFlag Overflow (selectBit 6 y) $
           done
 
+        {-# INLINE adcMem #-}
         adcMem addr = peek (memory addr) adc
+        {-# INLINE adc #-}
         adc x =
           flag Decimal $ \f ->
           cond f (adcBCD x) (adcNormal (register A) x)
           
+        {-# INLINE adcBCD #-}
         adcBCD x = adcNormal l (fromBCD x)
           where l = Location {
                   peek = \k -> peek (register A) (k . fromBCD),
@@ -482,6 +502,7 @@ cpu = fetch decode
                    setFlag Carry (geq v (byte 100)) $
                    k }
           
+        {-# INLINE adcNormal #-}
         adcNormal l x =
           flag Carry $ \c ->
           peek l $ \y ->
@@ -496,17 +517,22 @@ cpu = fetch decode
           poke l z $
           done
 
+        {-# INLINE sbcMem #-}
         sbcMem addr = peek (memory addr) sbc
+        {-# INLINE sbc #-}
         sbc x = 
           flag Decimal $ \f ->
           cond f (sbcBCD x) (adcNormal (register A) (xor x (byte (-1))))
 
+        {-# INLINE sbcBCD #-}
         sbcBCD x = adcNormal l (xor (fromBCD x) (byte (-1)))
           where l = Location {
                   peek = \k -> peek (register A) (k . fromBCD),
                   poke = \v k -> poke (register A) (toBCD v) k }
 
+        {-# INLINE cmpMem #-}
         cmpMem r addr = peek (memory addr) (cmp r)
+        {-# INLINE cmp #-}
         cmp r x =
           peek (register r) $ \y ->
           setFlag Carry (y `geq` x) $
@@ -514,19 +540,27 @@ cpu = fetch decode
           setFlag Negative (selectBit 7 (x `add` y)) $
           done
 
+        {-# INLINE inc #-}
         inc = adjust (byte 1)
+        {-# INLINE dec #-}
         dec = adjust (byte (-1))
+        {-# INLINE adjust #-}
         adjust x l =
           peek l $ \y ->
           poke l (x `add` y) $
           zeroNeg (x `add` y) $
           done
 
+        {-# INLINE asl #-}
         asl l = rotate l leftRotate (bit False)
+        {-# INLINE lsr #-}
         lsr l = rotate l rightRotate (bit False)
+        {-# INLINE rol #-}
         rol l = flag Carry $ rotate l leftRotate
+        {-# INLINE ror #-}
         ror l = flag Carry $ rotate l rightRotate
         
+        {-# INLINE rotate #-}
         rotate l f c =
           peek l $ \x ->
           let !(x', c') = f x c in
@@ -535,33 +569,41 @@ cpu = fetch decode
           zeroNeg x' $
           done
         
+        {-# INLINE leftRotate #-}
         leftRotate x c = (x `shl` c, selectBit 7 x)
+        {-# INLINE rightRotate #-}
         rightRotate x c = (x `shr` c, selectBit 0 x)
 
+        {-# INLINE jump #-}
         jump addr =
           storePC addr $
           done
 
+        {-# INLINE jsr #-}
         jsr addr =
           loadPC $ \pc ->
           push16 (pc `index` byte (-1)) $
           jump addr
         
+        {-# INLINE rts #-}
         rts =
           pop16 $ \pc ->
           storePC (pc `index` byte 1) $
           done
 
+        {-# INLINE branchIf #-}
         branchIf f =
           flag f $ \v ->
           relative $ \addr ->
           cond v (jump addr) done
           
+        {-# INLINE branchNot #-}
         branchNot f =
           flag f $ \v ->
           relative $ \addr ->
           cond v done (jump addr)
 
+        {-# INLINE brk #-}
         brk =
           loadPC $ \pc ->
           push16 (pc `index` byte (-1)) $
@@ -569,11 +611,13 @@ cpu = fetch decode
           peek16 (address 0xfffe) $ \pc' ->
           jump pc'
 
+        {-# INLINE rti #-}
         rti =
           plp $
           pop16 $ \pc ->
           jump (pc `index` byte 2)
 
+        {-# INLINE zeroNeg #-}
         zeroNeg v k =
           setFlag Zero (zero v) $
           setFlag Negative (selectBit 7 v) $
