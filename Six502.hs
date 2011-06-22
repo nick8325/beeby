@@ -6,6 +6,8 @@
 {-# LANGUAGE BangPatterns, TypeFamilies, MultiParamTypeClasses, FunctionalDependencies #-}
 module Six502 where
 
+import Control.Monad
+
 -- 6502 documentation from
 -- http://www.obelisk.demon.co.uk/6502/
 -- Flags register information from
@@ -18,365 +20,360 @@ module Six502 where
 data Flag = Carry | Zero | InterruptDisable | Decimal | Overflow | Negative
 data Register = A | X | Y | Stack
 
-data Location program =
-  Location { peek :: (Byte program -> program) -> program,
-             poke :: Byte program -> program -> program }
+data Location m =
+  Location { peek :: m (Byte m),
+             poke :: Byte m -> m () }
 
-class Program program where
-  data Addr program
-  data Byte program
-  data Bit program
+class Monad m => Machine m where
+  data Addr m
+  data Byte m
+  data Bit m
   
-  address :: Int -> Addr program
-  index :: Addr program -> Byte program -> Addr program
-  page :: Addr program -> Byte program
-  offset :: Addr program -> Byte program
-  paged :: Byte program -> Byte program -> Addr program
-  byte :: Int -> Byte program
-  bit :: Bool -> Bit program
+  address :: Int -> Addr m
+  index :: Addr m -> Byte m -> Addr m
+  page :: Addr m -> Byte m
+  offset :: Addr m -> Byte m
+  paged :: Byte m -> Byte m -> Addr m
+  byte :: Int -> Byte m
+  bit :: Bool -> Bit m
 
-  shl :: Byte program -> Byte program
-  shr :: Byte program -> Byte program
-  selectBit :: Int -> Byte program -> Bit program
-  oneBit :: Int -> Bit program -> Byte program
-  zero :: Byte program -> Bit program
-  eq :: Byte program -> Byte program -> Bit program
-  geq :: Byte program -> Byte program -> Bit program
+  shl :: Byte m -> Byte m
+  shr :: Byte m -> Byte m
+  selectBit :: Int -> Byte m -> Bit m
+  oneBit :: Int -> Bit m -> Byte m
+  zero :: Byte m -> Bit m
+  eq :: Byte m -> Byte m -> Bit m
+  geq :: Byte m -> Byte m -> Bit m
 
-  add :: Byte program -> Byte program -> Byte program
-  carry :: Byte program -> Byte program -> Bit program
-  toBCD :: Byte program -> Byte program
-  fromBCD :: Byte program -> Byte program
+  add :: Byte m -> Byte m -> Byte m
+  carry :: Byte m -> Byte m -> Bit m
+  toBCD :: Byte m -> Byte m
+  fromBCD :: Byte m -> Byte m
   
-  and_ :: Byte program -> Byte program -> Byte program
-  or_ :: Byte program -> Byte program -> Byte program
-  xor :: Byte program -> Byte program -> Byte program
-  bitOr :: Bit program -> Bit program -> Bit program
+  and_ :: Byte m -> Byte m -> Byte m
+  or_ :: Byte m -> Byte m -> Byte m
+  xor :: Byte m -> Byte m -> Byte m
+  bitOr :: Bit m -> Bit m -> Bit m
 
-  memory :: Addr program -> Location program
-  register :: Register -> Location program
-  flag :: Flag -> (Bit program -> program) -> program
-  setFlag :: Flag -> Bit program -> program -> program
-  loadPC :: (Addr program -> program) -> program
-  storePC :: Addr program -> program -> program
+  memory :: Addr m -> Location m
+  register :: Register -> Location m
+  flag :: Flag -> m (Bit m)
+  setFlag :: Flag -> Bit m -> m ()
+  loadPC :: m (Addr m)
+  storePC :: Addr m -> m ()
 
-  cond :: Bit program -> program -> program -> program
+  cond :: Bit m -> m a -> m a -> m a
 
-  fetch :: (Int -> program) -> program
-  tick :: Int -> program -> program
-
-  done :: program
+  fetch :: m Int
+  tick :: Int -> m ()
 
 {-# INLINE zeroPage #-}
-zeroPage :: Program program => Byte program -> Addr program
+zeroPage :: Machine m => Byte m -> Addr m
 zeroPage = paged (byte 0)
 
 {-# INLINE push #-}
-push :: Program program => Byte program -> program -> program
-push x k =
-  peek (register Stack) $ \addr ->
-  poke (register Stack) (add addr (byte (-1))) $
-  poke (memory (zeroPage addr)) x $
-  k
+push :: Machine m => Byte m -> m ()
+push x = do
+  addr <- peek (register Stack)
+  poke (register Stack) (add addr (byte (-1)))
+  poke (memory (zeroPage addr)) x
 
 {-# INLINE pop #-}
-pop :: Program program => (Byte program -> program) -> program
-pop k =
-  peek (register Stack) $ \addr ->
-  poke (register Stack) (add addr (byte 1)) $
-  peek (memory (zeroPage addr)) $ \x ->
-  k x
+pop :: Machine m => m (Byte m)
+pop = do
+  addr <- peek (register Stack)
+  poke (register Stack) (add addr (byte 1))
+  peek (memory (zeroPage addr))
 
 {-# INLINE push16 #-}
-push16 :: Program program => Addr program -> program -> program
-push16 addr k =
-  push (page addr) $
-  push (offset addr) $
-  k
+push16 :: Machine m => Addr m -> m ()
+push16 addr = do
+  push (page addr)
+  push (offset addr)
 
 {-# INLINE pop16 #-}
-pop16 :: Program program => (Addr program -> program) -> program
-pop16 k =
-  pop $ \o ->
-  pop $ \p ->
-  k (paged p o)
+pop16 :: Machine m => m (Addr m)
+pop16 = do
+  o <- pop
+  p <- pop
+  return (paged p o)
 
 {-# INLINE peek16 #-}
-peek16 :: Program program => Addr program -> (Addr program -> program) -> program
-peek16 addr k =
-  peek (memory addr) $ \x ->
-  peek (memory (addr `index` byte 1)) $ \y ->
-  k (paged y x)
+peek16 :: Machine m => Addr m -> m (Addr m)
+peek16 addr = do
+  x <- peek (memory addr)
+  y <- peek (memory (addr `index` byte 1))
+  return (paged y x)
 
 {-# INLINE imm #-}
-imm :: Program program => (Byte program -> program) -> program
-imm k = fetch (k . byte)
+imm :: Machine m => m (Byte m)
+imm = liftM byte fetch
 
 {-# INLINE zp #-}
-zp :: Program program => (Addr program -> program) -> program
-zp k = fetch (\x -> k (zeroPage (byte x)))
+zp :: Machine m => m (Addr m)
+zp = liftM (zeroPage . byte) fetch
 
 {-# INLINE zpRel #-}
-zpRel :: Program program => Register -> (Addr program -> program) -> program
-zpRel r k =
-  fetch $ \x ->
-  peek (register r) $ \y ->
-  k (zeroPage (add (byte x) y))
+zpRel :: Machine m => Register -> m (Addr m)
+zpRel r = do
+  x <- fetch
+  y <- peek (register r)
+  return (zeroPage (add (byte x) y))
 
 {-# INLINE absolute #-}
-absolute :: Program program => (Addr program -> program) -> program
-absolute k = fetch $ \x -> fetch $ \y -> k (paged (byte y) (byte x))
+absolute :: Machine m => m (Addr m)
+absolute = do
+  x <- imm
+  y <- imm
+  return (paged y x)
 
 {-# INLINE indexed #-}
-indexed :: Program program => Register -> (Addr program -> program) -> program
-indexed r k =
-  absolute $ \addr ->
-  peek (register r) $ \x ->
-  k (addr `index` x)
+indexed :: Machine m => Register -> m (Addr m)
+indexed r = do
+  addr <- absolute
+  x <- peek (register r)
+  return (addr `index` x)
 
 {-# INLINE relative #-}
-relative :: Program program => (Addr program -> program) -> program
-relative k =
+relative :: Machine m => m (Addr m)
+relative = do
   -- important to do imm before loadPC because address
   -- should be relative to *final* value of pc
-  imm $ \x ->
-  loadPC $ \pc ->
-  k (pc `index` x)
+  x <- imm
+  pc <- loadPC
+  return (pc `index` x)
 
 {-# INLINE indirect #-}
-indirect :: Program program => (Addr program -> program) -> program
-indirect k =
-  absolute $ \addr ->
-  peek16 addr $ \addr' ->
-  k addr'
+indirect :: Machine m => m (Addr m)
+indirect = do
+  addr <- absolute
+  addr' <- peek16 addr
+  return addr'
 
 {-# INLINE indirectX #-}
-indirectX :: Program program => (Addr program -> program) -> program
-indirectX k =
-  fetch $ \x ->
-  peek (register X) $ \y ->
-  peek16 (zeroPage (add (byte x) y)) $ \addr ->
-  k addr
+indirectX :: Machine m => m (Addr m)
+indirectX = do
+  x <- fetch
+  y <- peek (register X)
+  addr <- peek16 (zeroPage (add (byte x) y))
+  return addr
 
 {-# INLINE indirectY #-}
-indirectY :: Program program => (Addr program -> program) -> program
-indirectY k =
-  fetch $ \x ->
-  peek16 (zeroPage (byte x)) $ \addr ->
-  peek (register Y) $ \y ->
-  k (addr `index` y)
+indirectY :: Machine m => m (Addr m)
+indirectY = do
+  x <- fetch
+  addr <- peek16 (zeroPage (byte x))
+  y <- peek (register Y)
+  return (addr `index` y)
 
 {-# INLINE cpu #-}
-cpu :: Program program => program
-cpu = fetch decode
+cpu :: Machine m => m ()
+cpu = fetch >>= decode
   where -- LDA
-        decode 0xa9 = tick 2 $ imm (ld A)
-        decode 0xa5 = tick 3 $ zp ldaMem
-        decode 0xb5 = tick 4 $ zpRel X ldaMem
-        decode 0xad = tick 4 $ absolute ldaMem
-        decode 0xbd = tick 4 $ indexed X ldaMem
+        decode 0xa9 = do { tick 2; imm >>= ld A }
+        decode 0xa5 = do { tick 3; zp >>= ldaMem }
+        decode 0xb5 = do { tick 4; zpRel X >>= ldaMem }
+        decode 0xad = do { tick 4; absolute >>= ldaMem }
+        decode 0xbd = do { tick 4; indexed X >>= ldaMem }
         decode _ = error "oops"
-        decode 0xb9 = tick 4 $ indexed Y ldaMem
-        decode 0xa1 = tick 6 $ indirectX ldaMem
-        decode 0xb1 = tick 5 $ indirectY ldaMem
+        decode 0xb9 = do { tick 4; indexed Y >>= ldaMem }
+        decode 0xa1 = do { tick 6; indirectX >>= ldaMem }
+        decode 0xb1 = do { tick 5; indirectY >>= ldaMem }
         -- LDX
-        decode 0xa2 = tick 2 $ imm (ld X)
-        decode 0xa6 = tick 3 $ zp ldxMem
-        decode 0xb6 = tick 4 $ zpRel Y ldxMem
-        decode 0xae = tick 4 $ absolute ldxMem
-        decode 0xbe = tick 4 $ indexed Y ldxMem
+        decode 0xa2 = do { tick 2; imm >>= ld X }
+        decode 0xa6 = do { tick 3; zp >>= ldxMem }
+        decode 0xb6 = do { tick 4; zpRel Y >>= ldxMem }
+        decode 0xae = do { tick 4; absolute >>= ldxMem }
+        decode 0xbe = do { tick 4; indexed Y >>= ldxMem }
         -- LDY
-        decode 0xa0 = tick 2 $ imm (ld Y)
-        decode 0xa4 = tick 3 $ zp ldyMem
-        decode 0xb4 = tick 4 $ zpRel X ldyMem
-        decode 0xac = tick 4 $ absolute ldyMem
-        decode 0xbc = tick 4 $ indexed X ldyMem
+        decode 0xa0 = do { tick 2; imm >>= ld Y }
+        decode 0xa4 = do { tick 3; zp >>= ldyMem }
+        decode 0xb4 = do { tick 4; zpRel X >>= ldyMem }
+        decode 0xac = do { tick 4; absolute >>= ldyMem }
+        decode 0xbc = do { tick 4; indexed X >>= ldyMem }
         -- STA
-        decode 0x85 = tick 3 $ zp sta
-        decode 0x95 = tick 4 $ zpRel X sta
-        decode 0x8d = tick 4 $ absolute sta
-        decode 0x9d = tick 5 $ indexed X sta
-        decode 0x99 = tick 5 $ indexed Y sta
-        decode 0x81 = tick 6 $ indirectX sta
-        decode 0x91 = tick 6 $ indirectY sta
+        decode 0x85 = do { tick 3; zp >>= sta }
+        decode 0x95 = do { tick 4; zpRel X >>= sta }
+        decode 0x8d = do { tick 4; absolute >>= sta }
+        decode 0x9d = do { tick 5; indexed X >>= sta }
+        decode 0x99 = do { tick 5; indexed Y >>= sta }
+        decode 0x81 = do { tick 6; indirectX >>= sta }
+        decode 0x91 = do { tick 6; indirectY >>= sta }
         -- STX
-        decode 0x86 = tick 3 $ zp stx
-        decode 0x96 = tick 4 $ zpRel Y stx
-        decode 0x8e = tick 4 $ absolute stx
+        decode 0x86 = do { tick 3; zp >>= stx }
+        decode 0x96 = do { tick 4; zpRel Y >>= stx }
+        decode 0x8e = do { tick 4; absolute >>= stx }
         -- STY
-        decode 0x84 = tick 3 $ zp sty
-        decode 0x94 = tick 4 $ zpRel X sty
-        decode 0x8c = tick 4 $ absolute sty
+        decode 0x84 = do { tick 3; zp >>= sty }
+        decode 0x94 = do { tick 4; zpRel X >>= sty }
+        decode 0x8c = do { tick 4; absolute >>= sty }
         -- TAX
-        decode 0xaa = tick 2 $ transfer A X
+        decode 0xaa = do { tick 2; transfer A X }
         -- TAY
-        decode 0xa8 = tick 2 $ transfer A Y
+        decode 0xa8 = do { tick 2; transfer A Y }
         -- TXA
-        decode 0x8a = tick 2 $ transfer X A
+        decode 0x8a = do { tick 2; transfer X A }
         -- TYA
-        decode 0x98 = tick 2 $ transfer Y A
+        decode 0x98 = do { tick 2; transfer Y A }
         -- TSX
-        decode 0xba = tick 2 (transfer Stack X)
+        decode 0xba = do { tick 2; transfer Stack X }
         -- TXS
-        decode 0x9a =
-          tick 2 $
-          peek (register X) $ \x ->
-          poke (register Stack) x $
-          done
+        decode 0x9a = do
+          tick 2
+          x <- peek (register X)
+          poke (register Stack) x
         -- PHA
-        decode 0x48 =
-          tick 3 $
-          peek (register A) $ \x ->
-          push x $
-          done
+        decode 0x48 = do
+          tick 3
+          x <- peek (register A)
+          push x
         -- PLA
-        decode 0x68 =
-          tick 4 $
-          pop $ \x ->
-          poke (register A) x $
-          zeroNeg x $
-          done
+        decode 0x68 = do
+          tick 4
+          x <- pop
+          poke (register A) x
+          zeroNeg x
         -- PHP
-        decode 0x08 = tick 3 $ php (bit False) done
+        decode 0x08 = do { tick 3; php (bit False) }
         -- PLP
-        decode 0x28 = tick 2 $ plp done
+        decode 0x28 = do { tick 2; plp }
         -- AND
-        decode 0x29 = tick 2 $ imm (acc and_)
-        decode 0x25 = tick 3 $ zp andMem
-        decode 0x35 = tick 4 $ zpRel X andMem
-        decode 0x2d = tick 4 $ absolute andMem
-        decode 0x3d = tick 4 $ indexed X andMem
-        decode 0x39 = tick 4 $ indexed Y andMem
-        decode 0x21 = tick 6 $ indirectX andMem
-        decode 0x31 = tick 5 $ indirectY andMem
+        decode 0x29 = do { tick 2; imm >>= acc and_ }
+        decode 0x25 = do { tick 3; zp >>= andMem }
+        decode 0x35 = do { tick 4; zpRel X >>= andMem }
+        decode 0x2d = do { tick 4; absolute >>= andMem }
+        decode 0x3d = do { tick 4; indexed X >>= andMem }
+        decode 0x39 = do { tick 4; indexed Y >>= andMem }
+        decode 0x21 = do { tick 6; indirectX >>= andMem }
+        decode 0x31 = do { tick 5; indirectY >>= andMem }
         -- EOR
-        decode 0x49 = tick 2 $ imm (acc xor)
-        decode 0x45 = tick 3 $ zp xorMem
-        decode 0x55 = tick 4 $ zpRel X xorMem
-        decode 0x4d = tick 4 $ absolute xorMem
-        decode 0x5d = tick 4 $ indexed X xorMem
-        decode 0x59 = tick 4 $ indexed Y xorMem
-        decode 0x41 = tick 6 $ indirectX xorMem
-        decode 0x51 = tick 5 $ indirectY xorMem
+        decode 0x49 = do { tick 2; imm >>= acc xor }
+        decode 0x45 = do { tick 3; zp >>= xorMem }
+        decode 0x55 = do { tick 4; zpRel X >>= xorMem }
+        decode 0x4d = do { tick 4; absolute >>= xorMem }
+        decode 0x5d = do { tick 4; indexed X >>= xorMem }
+        decode 0x59 = do { tick 4; indexed Y >>= xorMem }
+        decode 0x41 = do { tick 6; indirectX >>= xorMem }
+        decode 0x51 = do { tick 5; indirectY >>= xorMem }
         -- ORA
-        decode 0x09 = tick 2 $ imm (acc or_)
-        decode 0x05 = tick 3 $ zp orMem
-        decode 0x15 = tick 4 $ zpRel X orMem
-        decode 0x0d = tick 4 $ absolute orMem
-        decode 0x1d = tick 4 $ indexed X orMem
-        decode 0x19 = tick 4 $ indexed Y orMem
-        decode 0x01 = tick 6 $ indirectX orMem
-        decode 0x11 = tick 5 $ indirectY orMem
+        decode 0x09 = do { tick 2; imm >>= acc or_ }
+        decode 0x05 = do { tick 3; zp >>= orMem }
+        decode 0x15 = do { tick 4; zpRel X >>= orMem }
+        decode 0x0d = do { tick 4; absolute >>= orMem }
+        decode 0x1d = do { tick 4; indexed X >>= orMem }
+        decode 0x19 = do { tick 4; indexed Y >>= orMem }
+        decode 0x01 = do { tick 6; indirectX >>= orMem }
+        decode 0x11 = do { tick 5; indirectY >>= orMem }
         -- BIT
-        decode 0x24 = tick 3 $ zp bitTest
-        decode 0x2c = tick 4 $ absolute bitTest
+        decode 0x24 = do { tick 3; zp >>= bitTest }
+        decode 0x2c = do { tick 4; absolute >>= bitTest }
         -- ADC
-        decode 0x69 = tick 2 $ imm adc
-        decode 0x65 = tick 3 $ zp adcMem
-        decode 0x75 = tick 4 $ zpRel X adcMem
-        decode 0x6d = tick 4 $ absolute adcMem
-        decode 0x7d = tick 4 $ indexed X adcMem
-        decode 0x79 = tick 4 $ indexed Y adcMem
-        decode 0x61 = tick 6 $ indirectX adcMem
-        decode 0x71 = tick 5 $ indirectY adcMem
+        decode 0x69 = do { tick 2; imm >>= adc }
+        decode 0x65 = do { tick 3; zp >>= adcMem }
+        decode 0x75 = do { tick 4; zpRel X >>= adcMem }
+        decode 0x6d = do { tick 4; absolute >>= adcMem }
+        decode 0x7d = do { tick 4; indexed X >>= adcMem }
+        decode 0x79 = do { tick 4; indexed Y >>= adcMem }
+        decode 0x61 = do { tick 6; indirectX >>= adcMem }
+        decode 0x71 = do { tick 5; indirectY >>= adcMem }
         -- SBC
-        decode 0xe9 = tick 2 $ imm sbc
-        decode 0xe5 = tick 3 $ zp sbcMem
-        decode 0xf5 = tick 4 $ zpRel X sbcMem
-        decode 0xed = tick 4 $ absolute sbcMem
-        decode 0xfd = tick 4 $ indexed X sbcMem
-        decode 0xf9 = tick 4 $ indexed Y sbcMem
-        decode 0xe1 = tick 6 $ indirectX sbcMem
-        decode 0xf1 = tick 5 $ indirectY sbcMem
+        decode 0xe9 = do { tick 2; imm >>= sbc }
+        decode 0xe5 = do { tick 3; zp >>= sbcMem }
+        decode 0xf5 = do { tick 4; zpRel X >>= sbcMem }
+        decode 0xed = do { tick 4; absolute >>= sbcMem }
+        decode 0xfd = do { tick 4; indexed X >>= sbcMem }
+        decode 0xf9 = do { tick 4; indexed Y >>= sbcMem }
+        decode 0xe1 = do { tick 6; indirectX >>= sbcMem }
+        decode 0xf1 = do { tick 5; indirectY >>= sbcMem }
         -- CMP
-        decode 0xc9 = tick 2 $ imm (cmp A)
-        decode 0xc5 = tick 3 $ zp (cmpMem A)
-        decode 0xd5 = tick 4 $ zpRel X (cmpMem A)
-        decode 0xcd = tick 4 $ absolute (cmpMem A)
-        decode 0xdd = tick 4 $ indexed X (cmpMem A)
-        decode 0xd9 = tick 4 $ indexed Y (cmpMem A)
-        decode 0xc1 = tick 6 $ indirectX (cmpMem A)
-        decode 0xd1 = tick 5 $ indirectY (cmpMem A)
+        decode 0xc9 = do { tick 2; imm >>= cmp A }
+        decode 0xc5 = do { tick 3; zp >>= (cmpMem A) }
+        decode 0xd5 = do { tick 4; zpRel X >>= (cmpMem A) }
+        decode 0xcd = do { tick 4; absolute >>= (cmpMem A) }
+        decode 0xdd = do { tick 4; indexed X >>= (cmpMem A) }
+        decode 0xd9 = do { tick 4; indexed Y >>= (cmpMem A) }
+        decode 0xc1 = do { tick 6; indirectX >>= (cmpMem A) }
+        decode 0xd1 = do { tick 5; indirectY >>= (cmpMem A) }
         -- CPX
-        decode 0xe0 = tick 2 $ imm (cmp X)
-        decode 0xe4 = tick 3 $ zp (cmpMem X)
-        decode 0xec = tick 4 $ absolute (cmpMem X)
+        decode 0xe0 = do { tick 2; imm >>= cmp X }
+        decode 0xe4 = do { tick 3; zp >>= (cmpMem X) }
+        decode 0xec = do { tick 4; absolute >>= (cmpMem X) }
         -- CPY
-        decode 0xc0 = tick 2 $ imm (cmp Y)
-        decode 0xc4 = tick 3 $ zp (cmpMem Y)
-        decode 0xcc = tick 4 $ absolute (cmpMem Y)
+        decode 0xc0 = do { tick 2; imm >>= cmp Y }
+        decode 0xc4 = do { tick 3; zp >>= (cmpMem Y) }
+        decode 0xcc = do { tick 4; absolute >>= (cmpMem Y) }
         -- INC
-        decode 0xe6 = tick 5 $ zp incMem
-        decode 0xf6 = tick 6 $ zpRel X incMem
-        decode 0xee = tick 6 $ absolute incMem
-        decode 0xfe = tick 7 $ indexed X incMem
+        decode 0xe6 = do { tick 5; zp >>= incMem }
+        decode 0xf6 = do { tick 6; zpRel X >>= incMem }
+        decode 0xee = do { tick 6; absolute >>= incMem }
+        decode 0xfe = do { tick 7; indexed X >>= incMem }
         -- INX
-        decode 0xe8 = tick 2 $ inc (register X)
+        decode 0xe8 = do { tick 2; inc (register X) }
         -- INY
-        decode 0xc8 = tick 2 $ inc (register Y)
+        decode 0xc8 = do { tick 2; inc (register Y) }
         -- DEC
-        decode 0xc6 = tick 5 $ zp decMem
-        decode 0xd6 = tick 6 $ zpRel X decMem
-        decode 0xce = tick 6 $ absolute decMem
-        decode 0xde = tick 7 $ absolute decMem
+        decode 0xc6 = do { tick 5; zp >>= decMem }
+        decode 0xd6 = do { tick 6; zpRel X >>= decMem }
+        decode 0xce = do { tick 6; absolute >>= decMem }
+        decode 0xde = do { tick 7; absolute >>= decMem }
         -- DEX
-        decode 0xca = tick 2 $ dec (register X)
+        decode 0xca = do { tick 2; dec (register X) }
         -- DEY
-        decode 0x88 = tick 2 $ dec (register Y)
+        decode 0x88 = do { tick 2; dec (register Y) }
         -- ASL
-        decode 0x0a = tick 2 $ asl (register A)
-        decode 0x06 = tick 5 $ zp aslMem
-        decode 0x16 = tick 6 $ zpRel X aslMem
-        decode 0x0e = tick 6 $ absolute aslMem
-        decode 0x1e = tick 7 $ indexed X aslMem
+        decode 0x0a = do { tick 2; asl (register A) }
+        decode 0x06 = do { tick 5; zp >>= aslMem }
+        decode 0x16 = do { tick 6; zpRel X >>= aslMem }
+        decode 0x0e = do { tick 6; absolute >>= aslMem }
+        decode 0x1e = do { tick 7; indexed X >>= aslMem }
         -- LSR
-        decode 0x4a = tick 2 $ lsr (register A)
-        decode 0x46 = tick 5 $ zp lsrMem
-        decode 0x56 = tick 6 $ zpRel X lsrMem
-        decode 0x4e = tick 6 $ absolute lsrMem
-        decode 0x5e = tick 7 $ indexed X lsrMem
+        decode 0x4a = do { tick 2; lsr (register A) }
+        decode 0x46 = do { tick 5; zp >>= lsrMem }
+        decode 0x56 = do { tick 6; zpRel X >>= lsrMem }
+        decode 0x4e = do { tick 6; absolute >>= lsrMem }
+        decode 0x5e = do { tick 7; indexed X >>= lsrMem }
         -- ROL
-        decode 0x2a = tick 2 $ rol (register A)
-        decode 0x26 = tick 5 $ zp rolMem
-        decode 0x36 = tick 6 $ zpRel X rolMem
-        decode 0x2e = tick 6 $ absolute rolMem
-        decode 0x3e = tick 7 $ indexed X rolMem
+        decode 0x2a = do { tick 2; rol (register A) }
+        decode 0x26 = do { tick 5; zp >>= rolMem }
+        decode 0x36 = do { tick 6; zpRel X >>= rolMem }
+        decode 0x2e = do { tick 6; absolute >>= rolMem }
+        decode 0x3e = do { tick 7; indexed X >>= rolMem }
         -- ROR
-        decode 0x6a = tick 2 $ ror (register A)
-        decode 0x66 = tick 5 $ zp rorMem
-        decode 0x76 = tick 6 $ zpRel X rorMem
-        decode 0x6e = tick 6 $ absolute rorMem
-        decode 0x7e = tick 7 $ indexed X rorMem
+        decode 0x6a = do { tick 2; ror (register A) }
+        decode 0x66 = do { tick 5; zp >>= rorMem }
+        decode 0x76 = do { tick 6; zpRel X >>= rorMem }
+        decode 0x6e = do { tick 6; absolute >>= rorMem }
+        decode 0x7e = do { tick 7; indexed X >>= rorMem }
         -- JMP
-        decode 0x4c = tick 3 $ absolute jump
-        decode 0x6c = tick 5 $ indirect jump
+        decode 0x4c = do { tick 3; absolute >>= storePC }
+        decode 0x6c = do { tick 5; indirect >>= storePC }
         -- JSR
-        decode 0x20 = tick 6 $ absolute jsr
+        decode 0x20 = do { tick 6; absolute >>= jsr }
         -- RTS
-        decode 0x60 = tick 6 $ rts
+        decode 0x60 = do { tick 6; rts }
         -- branch instructions
-        decode 0x90 = tick 2 $ branchNot Carry
-        decode 0xb0 = tick 2 $ branchIf Carry
-        decode 0xd0 = tick 2 $ branchNot Zero
-        decode 0xf0 = tick 2 $ branchIf Zero
-        decode 0x10 = tick 2 $ branchNot Negative
-        decode 0x30 = tick 2 $ branchIf Negative
-        decode 0x50 = tick 2 $ branchNot Overflow
-        decode 0x70 = tick 2 $ branchIf Overflow
+        decode 0x90 = do { tick 2; branchNot Carry }
+        decode 0xb0 = do { tick 2; branchIf Carry }
+        decode 0xd0 = do { tick 2; branchNot Zero }
+        decode 0xf0 = do { tick 2; branchIf Zero }
+        decode 0x10 = do { tick 2; branchNot Negative }
+        decode 0x30 = do { tick 2; branchIf Negative }
+        decode 0x50 = do { tick 2; branchNot Overflow }
+        decode 0x70 = do { tick 2; branchIf Overflow }
         -- flag instructions
-        decode 0x18 = tick 2 $ setFlag Carry (bit False) done
-        decode 0xd8 = tick 2 $ setFlag Decimal (bit False) done
-        decode 0x58 = tick 2 $ setFlag InterruptDisable (bit False) done
-        decode 0xb8 = tick 2 $ setFlag Overflow (bit False) done
-        decode 0x38 = tick 2 $ setFlag Carry (bit True) done
-        decode 0xf8 = tick 2 $ setFlag Decimal (bit True) done
-        decode 0x78 = tick 2 $ setFlag InterruptDisable (bit True) done
+        decode 0x18 = do { tick 2; setFlag Carry (bit False) }
+        decode 0xd8 = do { tick 2; setFlag Decimal (bit False) }
+        decode 0x58 = do { tick 2; setFlag InterruptDisable (bit False) }
+        decode 0xb8 = do { tick 2; setFlag Overflow (bit False) }
+        decode 0x38 = do { tick 2; setFlag Carry (bit True) }
+        decode 0xf8 = do { tick 2; setFlag Decimal (bit True) }
+        decode 0x78 = do { tick 2; setFlag InterruptDisable (bit True) }
         -- BRK
-        decode 0x00 = tick 7 $ brk
+        decode 0x00 = do { tick 7; brk }
         -- NOP
-        decode 0xea = tick 2 $ done
+        decode 0xea = do { tick 2 }
         -- RTI
-        decode 0x40 = tick 6 $ rti
+        decode 0x40 = do { tick 6; rti }
 
         -- We mark absolutely every higher-order function for inlining,
         -- so as to straighten the control flow out.
@@ -391,38 +388,35 @@ cpu = fetch decode
         ldxMem = ldMem X
         ldyMem = ldMem Y
         {-# INLINE ldMem #-}
-        ldMem r addr = peek (memory addr) (ld r)
+        ldMem r addr = peek (memory addr) >>= ld r
         {-# INLINE ld #-}
-        ld r v =
-          poke (register r) v $
-          zeroNeg v $
-          done
+        ld r v = do
+          poke (register r) v
+          zeroNeg v
 
         sta = st A
         stx = st X
         sty = st Y
 
         {-# INLINE st #-}
-        st r addr =
-          peek (register r) $ \x ->
-          poke (memory addr) x $
-          done
+        st r addr = do
+          x <- peek (register r)
+          poke (memory addr) x
           
         {-# INLINE transfer #-}
-        transfer r1 r2 =
-          peek (register r1) $ \x ->
-          poke (register r2) x $
-          zeroNeg x $
-          done
+        transfer r1 r2 = do
+          x <- peek (register r1)
+          poke (register r2) x
+          zeroNeg x
 
         {-# INLINE php #-}
-        php break k =
-          flag Negative $ \b7 ->
-          flag Overflow $ \b6 ->
-          flag Decimal $ \b3 ->
-          flag InterruptDisable $ \b2 ->
-          flag Zero $ \b1 ->
-          flag Carry $ \b0 ->
+        php break = do
+          b7 <- flag Negative
+          b6 <- flag Overflow
+          b3 <- flag Decimal
+          b2 <- flag InterruptDisable
+          b1 <- flag Zero
+          b0 <- flag Carry
           push (oneBit 0 b0 `add`
                 oneBit 1 b1 `add`
                 oneBit 2 b2 `add`
@@ -430,87 +424,80 @@ cpu = fetch decode
                 oneBit 4 break `add`
                 oneBit 5 (bit True) `add`
                 oneBit 6 b6 `add`
-                oneBit 7 b7) $
-          k
+                oneBit 7 b7)
         {-# INLINE plp #-}
-        plp k =
-          pop $ \x ->
-          setFlag Negative (selectBit 7 x) $
-          setFlag Overflow (selectBit 6 x) $
-          setFlag Decimal (selectBit 3 x) $
-          setFlag InterruptDisable (selectBit 2 x) $
-          setFlag Zero (selectBit 1 x) $
-          setFlag Carry (selectBit 0 x) $
-          k
+        plp = do
+          x <- pop
+          setFlag Negative (selectBit 7 x)
+          setFlag Overflow (selectBit 6 x)
+          setFlag Decimal (selectBit 3 x)
+          setFlag InterruptDisable (selectBit 2 x)
+          setFlag Zero (selectBit 1 x)
+          setFlag Carry (selectBit 0 x)
 
         andMem = accMem and_
         orMem = accMem or_
         xorMem = accMem xor
 
         {-# INLINE accMem #-}
-        accMem op addr = peek (memory addr) (acc op)
+        accMem op addr = peek (memory addr) >>= acc op
         {-# INLINE acc #-}
-        acc op x =
-          peek (register A) $ \y ->
-          poke (register A) (x `op` y) $
-          zeroNeg (x `op` y) $
-          done
+        acc op x = do
+          y <- peek (register A)
+          poke (register A) (x `op` y)
+          zeroNeg (x `op` y)
 
-        bitTest addr =
-          peek (register A) $ \x ->
-          peek (memory addr) $ \y ->
-          setFlag Zero (x `eq` y) $
-          setFlag Negative (selectBit 7 y) $
-          setFlag Overflow (selectBit 6 y) $
-          done
+        bitTest addr = do
+          x <- peek (register A)
+          y <- peek (memory addr)
+          setFlag Zero (x `eq` y)
+          setFlag Negative (selectBit 7 y)
+          setFlag Overflow (selectBit 6 y)
 
-        adcMem addr = peek (memory addr) adc
-        adc x =
-          flag Decimal $ \f ->
+        adcMem addr = peek (memory addr) >>= adc
+        adc x = do
+          f <- flag Decimal
           cond f (adcBCD x) (adcNormal (register A) x)
           
         adcBCD x = adcNormal l (fromBCD x)
           where l = Location {
-                  peek = \k -> peek (register A) (k . fromBCD),
-                  poke = \v k ->
-                   poke (register A) (toBCD v) $
-                   setFlag Carry (geq v (byte 100)) $
-                   k }
+                  peek = liftM fromBCD (peek (register A)),
+                  poke = \v -> do
+                   poke (register A) (toBCD v)
+                   setFlag Carry (geq v (byte 100)) }
           
         {-# INLINE adcNormal #-}
-        adcNormal l x =
-          flag Carry $ \c ->
-          peek l $ \y ->
+        adcNormal l x = do
+          c <- flag Carry
+          y <- peek l
           let !z = x `add` y `add` oneBit 0 c
               !zc = (x `carry` y) `bitOr` ((x `add` y) `carry` oneBit 0 c)
-              x `equ` y = x `xor` y `xor` byte (-1) in
-          zeroNeg z $
-          setFlag Carry zc $
-          setFlag Negative (selectBit 7 ((x `equ` y) `xor` z)) $
+              x `equ` y = x `xor` y `xor` byte (-1)
+          zeroNeg z
+          setFlag Carry zc
+          setFlag Negative (selectBit 7 ((x `equ` y) `xor` z))
           -- important that this goes at the end so that poke can set the carry flag
           -- in BCD mode
-          poke l z $
-          done
+          poke l z
 
-        sbcMem addr = peek (memory addr) sbc
-        sbc x = 
-          flag Decimal $ \f ->
+        sbcMem addr = peek (memory addr) >>= sbc
+        sbc x = do
+          f <- flag Decimal
           cond f (sbcBCD x) (adcNormal (register A) (xor x (byte (-1))))
 
         sbcBCD x = adcNormal l (xor (fromBCD x) (byte (-1)))
           where l = Location {
-                  peek = \k -> peek (register A) (k . fromBCD),
-                  poke = \v k -> poke (register A) (toBCD v) k }
+                  peek = liftM fromBCD (peek (register A)),
+                  poke = \v -> poke (register A) (toBCD v) }
 
         {-# INLINE cmpMem #-}
-        cmpMem r addr = peek (memory addr) (cmp r)
+        cmpMem r addr = peek (memory addr) >>= cmp r
         {-# INLINE cmp #-}
-        cmp r x =
-          peek (register r) $ \y ->
-          setFlag Carry (y `geq` x) $
-          setFlag Zero (zero (x `xor` y)) $
-          setFlag Negative (selectBit 7 (x `add` y)) $
-          done
+        cmp r x = do
+          y <- peek (register r)
+          setFlag Carry (y `geq` x)
+          setFlag Zero (zero (x `xor` y))
+          setFlag Negative (selectBit 7 (x `add` y))
 
         incMem = inc . memory
         decMem = dec . memory
@@ -520,11 +507,10 @@ cpu = fetch decode
         {-# INLINE dec #-}
         dec = adjust (byte (-1))
         {-# INLINE adjust #-}
-        adjust x l =
-          peek l $ \y ->
-          poke l (x `add` y) $
-          zeroNeg (x `add` y) $
-          done
+        adjust x l = do
+          y <- peek l
+          poke l (x `add` y)
+          zeroNeg (x `add` y)
 
         aslMem = asl . memory
         lsrMem = lsr . memory
@@ -536,62 +522,55 @@ cpu = fetch decode
         {-# INLINE lsr #-}
         lsr l = rotate l rightRotate (bit False)
         {-# INLINE rol #-}
-        rol l = flag Carry $ rotate l leftRotate
+        rol l = flag Carry >>= rotate l leftRotate
         {-# INLINE ror #-}
-        ror l = flag Carry $ rotate l rightRotate
+        ror l = flag Carry >>= rotate l rightRotate
         
         {-# INLINE rotate #-}
-        rotate l f c =
-          peek l $ \x ->
-          let !(x', c') = f x c in
-          poke l x' $
-          setFlag Carry c' $
-          zeroNeg x' $
-          done
+        rotate l f c = do
+          x <- peek l
+          let !(x', c') = f x c
+          poke l x'
+          setFlag Carry c'
+          zeroNeg x'
         
         leftRotate x c = (shl x `add` oneBit 0 c, selectBit 7 x)
         rightRotate x c = (shr x `add` oneBit 7 c, selectBit 0 x)
 
-        jump addr =
-          storePC addr $
-          done
-
-        jsr addr =
-          loadPC $ \pc ->
-          push16 (pc `index` byte (-1)) $
-          jump addr
+        jsr addr = do
+          pc <- loadPC
+          push16 (pc `index` byte (-1))
+          storePC addr
         
-        rts =
-          pop16 $ \pc ->
-          storePC (pc `index` byte 1) $
-          done
+        rts = do
+          pc <- pop16
+          storePC (pc `index` byte 1)
 
         {-# INLINE branchIf #-}
-        branchIf f =
-          flag f $ \v ->
-          relative $ \addr ->
-          cond v (jump addr) done
+        branchIf f = do
+          v <- flag f
+          addr <- relative
+          cond v (storePC addr) (return ())
           
         {-# INLINE branchNot #-}
-        branchNot f =
-          flag f $ \v ->
-          relative $ \addr ->
-          cond v done (jump addr)
+        branchNot f = do
+          v <- flag f
+          addr <- relative
+          cond v (return ()) (storePC addr)
 
-        brk =
-          loadPC $ \pc ->
-          push16 (pc `index` byte (-1)) $
-          php (bit True) $
-          peek16 (address 0xfffe) $ \pc' ->
-          jump pc'
+        brk = do
+          pc <- loadPC
+          push16 (pc `index` byte (-1))
+          php (bit True)
+          pc' <- peek16 (address 0xfffe)
+          storePC pc'
 
-        rti =
-          plp $
-          pop16 $ \pc ->
-          jump (pc `index` byte 2)
+        rti = do
+          plp
+          pc <- pop16
+          storePC (pc `index` byte 2)
 
         {-# INLINE zeroNeg #-}
-        zeroNeg v k =
-          setFlag Zero (zero v) $
-          setFlag Negative (selectBit 7 v) $
-          k
+        zeroNeg v = do
+          setFlag Zero (zero v)
+          setFlag Negative (selectBit 7 v)

@@ -1,9 +1,12 @@
-{-# LANGUAGE BangPatterns, TypeFamilies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, BangPatterns, TypeFamilies #-}
 -- A 6502 simulator.
 
 module Six502.Simulator where
 
 import Six502
+import Control.Monad
+import Control.Monad.Reader
+import Control.Monad.State
 import Control.Monad.ST
 import Data.Array.ST
 import Data.Array.Base
@@ -13,12 +16,22 @@ import Data.Bits hiding (xor)
 import qualified Data.Bits
 
 type Memory s = STUArray s Int Int8
-newtype Step s = Step (Memory s -> State -> ST s State)
+newtype Step s a = Step (ReaderT (Memory s) (StateT S (ST s)) a)
+  deriving Monad
 
-run :: Step s -> Memory s -> State -> ST s State
-run (Step f) !mem !state = f mem state
+liftReader :: ReaderT (Memory s) (StateT S (ST s)) a -> Step s a
+liftReader = Step
 
-data State = State {
+liftState :: StateT S (ST s) a -> Step s a
+liftState = Step . lift
+
+liftST :: ST s a -> Step s a
+liftST = Step . lift . lift
+
+run :: Step s a -> Memory s -> S -> ST s (a, S)
+run (Step x) !mem !state = runStateT (runReaderT x mem) state
+
+data S = S {
   rA, rX, rY, rStack :: {-# UNPACK #-} !Int,
   fCarry, fZero, fInterruptDisable, fDecimal, fOverflow, fNegative :: !Bool,
   pc :: {-# UNPACK #-} !Int,
@@ -43,36 +56,18 @@ fromSignedByte :: Byte (Step s) -> Int
 fromSignedByte (Byte x) = fromIntegral (fromIntegral x :: Int8)
 
 {-# INLINE peekMemory #-}
-peekMemory :: Addr (Step s) -> (Int -> Step s) -> Step s
-peekMemory !addr k = Step f
-  where {-# INLINE f #-}
-        f !mem !state =
-          do
-            x <- unsafeRead mem (fromAddr addr)
-            run (k (fromIntegral x)) mem state
+peekMemory :: Addr (Step s) -> Step s Int
+peekMemory !addr = do
+  mem <- liftReader ask
+  liftM fromIntegral (liftST (unsafeRead mem (fromAddr addr)))
 
 {-# INLINE pokeMemory #-}
-pokeMemory :: Addr (Step s) -> Byte (Step s) -> Step s -> Step s
-pokeMemory !addr !(Byte x) k = Step f
-  where {-# INLINE f #-}
-        f !mem !state =
-          do
-            unsafeWrite mem (fromAddr addr) (fromIntegral x)
-            run k mem state
+pokeMemory :: Addr (Step s) -> Byte (Step s) -> Step s ()
+pokeMemory !addr !(Byte x) = do
+  mem <- liftReader ask
+  liftST (unsafeWrite mem (fromAddr addr) (fromIntegral x))
 
-{-# INLINE peekState #-}
-peekState :: (State -> a) -> (a -> Step s) -> Step s
-peekState get k = Step f
-  where {-# INLINE f #-}
-        f !mem !state = run (k (get state)) mem state
-        
-{-# INLINE pokeState #-}
-pokeState :: (State -> State) -> Step s -> Step s
-pokeState put k = Step f
-  where {-# INLINE f #-}
-        f !mem !state = run k mem (put state)
-
-instance Program (Step s) where
+instance Machine (Step s) where
   -- It simplifies the generated code considerably to let GHC just use Ints everywhere.
   -- We let addresses and bytes be arbitrary integers, i.e., out-of-bounds:
   -- "Byte x" really represents the byte "x `mod` 256".
@@ -114,53 +109,50 @@ instance Program (Step s) where
 
   {-# INLINE memory #-}
   memory x =
-    Location { peek = \k -> peekMemory x (k . Byte),
+    Location { peek = liftM Byte (peekMemory x),
                poke = pokeMemory x }
 
   register A = 
-    Location { peek = peekState (Byte . rA),
-               poke = \(Byte x) -> pokeState (\s -> s { rA = x }) }
+    Location { peek = liftState (gets (Byte . rA)),
+               poke = \(Byte x) -> liftState (modify (\s -> s { rA = x })) }
 
   register X = 
-    Location { peek = peekState (Byte . rX),
-               poke = \(Byte x) -> pokeState (\s -> s { rX = x }) }
+    Location { peek = liftState (gets (Byte . rX)),
+               poke = \(Byte x) -> liftState (modify (\s -> s { rX = x })) }
 
-  register Y  = 
-    Location { peek = peekState (Byte . rY),
-               poke = \(Byte x) -> pokeState (\s -> s { rY = x }) }
+  register Y = 
+    Location { peek = liftState (gets (Byte . rY)),
+               poke = \(Byte x) -> liftState (modify (\s -> s { rY = x })) }
 
   register Stack = 
-    Location { peek = peekState (Byte . rStack),
-               poke = \(Byte x) -> pokeState (\s -> s { rStack = x }) }
+    Location { peek = liftState (gets (Byte . rStack)),
+               poke = \(Byte x) -> liftState (modify (\s -> s { rStack = x })) }
 
-  flag Carry = peekState (Bit . fCarry)
-  flag Zero = peekState (Bit . fZero)
-  flag InterruptDisable = peekState (Bit . fInterruptDisable)
-  flag Decimal = peekState (Bit . fDecimal)
-  flag Overflow = peekState (Bit . fOverflow)
-  flag Negative = peekState (Bit . fNegative)
+  flag Carry = liftState (gets (Bit . fCarry))
+  flag Zero = liftState (gets (Bit . fZero))
+  flag InterruptDisable = liftState (gets (Bit . fInterruptDisable))
+  flag Decimal = liftState (gets (Bit . fDecimal))
+  flag Overflow = liftState (gets (Bit . fOverflow))
+  flag Negative = liftState (gets (Bit . fNegative))
   
-  setFlag Carry (Bit x) = pokeState (\s -> s { fCarry = x })
-  setFlag Zero (Bit x) = pokeState (\s -> s { fZero = x })
-  setFlag InterruptDisable (Bit x) = pokeState (\s -> s { fInterruptDisable = x })
-  setFlag Decimal (Bit x) = pokeState (\s -> s { fDecimal = x })
-  setFlag Overflow (Bit x) = pokeState (\s -> s { fOverflow = x })
-  setFlag Negative (Bit x) = pokeState (\s -> s { fNegative = x })
+  setFlag Carry (Bit x) = liftState (modify (\s -> s { fCarry = x }))
+  setFlag Zero (Bit x) = liftState (modify (\s -> s { fZero = x }))
+  setFlag InterruptDisable (Bit x) = liftState (modify (\s -> s { fInterruptDisable = x }))
+  setFlag Decimal (Bit x) = liftState (modify (\s -> s { fDecimal = x }))
+  setFlag Overflow (Bit x) = liftState (modify (\s -> s { fOverflow = x }))
+  setFlag Negative (Bit x) = liftState (modify (\s -> s { fNegative = x }))
 
-  loadPC = peekState (Addr . pc)
-  storePC (Addr x) = pokeState (\s -> s { pc = x })
+  loadPC = liftState (gets (Addr . pc))
+  storePC (Addr x) = liftState (modify (\s -> s { pc = x }))
 
   cond (Bit x) p1 p2 = if x then p1 else p2
   {-# INLINE fetch #-}
-  fetch k =
-    loadPC $ \addr@(Addr pc) ->
-    peekMemory addr $ \x ->
-    storePC (Addr (pc+1)) $
-    k (fromIntegral x)
+  fetch = do
+    addr@(Addr pc) <- loadPC
+    x <- peekMemory addr
+    storePC (Addr (pc+1))
+    return (fromIntegral x)
 
-  tick !n k =
-    peekState ticks $ \x ->
-    pokeState (\s -> s { ticks = x+n }) $
-    k
-
-  done = Step (const return)
+  tick !n = do
+    x <- liftState (gets ticks)
+    liftState (modify (\s -> s { ticks = x+n }))
