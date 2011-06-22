@@ -1,3 +1,3 @@
-import Six502
+import Six502.Simulator
 
 main = undefined

@@ -5,4 +5,4 @@ Build-type: Simple
 
 Executable bbc
   Main-is: Main.hs
-  Build-depends: llvm, base >= 4
+  Build-depends: llvm, base >= 4, array
