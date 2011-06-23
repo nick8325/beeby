@@ -1,12 +1,13 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, BangPatterns, TypeFamilies #-}
+{-# LANGUAGE MagicHash, GeneralizedNewtypeDeriving, BangPatterns, TypeFamilies, Rank2Types #-}
 -- A 6502 simulator.
 
 module Six502.Simulator where
 
+import Prelude hiding (abs)
+import GHC.Types
+import GHC.Prim
 import Six502
 import Control.Monad
-import Control.Monad.Reader
-import Control.Monad.State
 import Control.Monad.ST
 import Data.Array.ST
 import Data.Array.Base
@@ -16,20 +17,29 @@ import Data.Bits hiding (xor)
 import qualified Data.Bits
 
 type Memory s = STUArray s Int Int8
-newtype Step s a = Step (ReaderT (Memory s) (StateT S (ST s)) a)
-  deriving Monad
+newtype Step s a = Step { run :: forall b. Memory s -> (a -> Sf (ST s b)) -> Sf (ST s b) }
 
-liftReader :: ReaderT (Memory s) (StateT S (ST s)) a -> Step s a
-liftReader = Step
+instance Monad (Step s) where
+  return x = Step (\ !_ k -> abs (\s -> apply (k x) s))
+  x >>= f =
+    Step (\ !m k -> run x m (\y -> run (f y) m k))
 
-liftState :: StateT S (ST s) a -> Step s a
-liftState = Step . lift
+forever :: Step s () -> Step s ()
+forever x = Step (\ !m _ ->
+                   let k = run x m (const k)
+                   in k)
+
+mem :: Step s (Memory s)
+mem = Step (\ !m k -> k m)
+
+gets :: (S -> a) -> Step s a
+gets f = Step (\ !m k -> abs (\s -> apply (k (f s)) s))
+
+modify :: (S -> S) -> Step s ()
+modify f = Step (\ !_ k -> abs (\s -> apply (k ()) (f s)))
 
 liftST :: ST s a -> Step s a
-liftST = Step . lift . lift
-
-run :: Step s a -> Memory s -> S -> ST s (a, S)
-run (Step x) !mem !state = runStateT (runReaderT x mem) state
+liftST x = Step (\ !_ !k -> abs (\s -> x >>= \x' -> apply (k x') s))
 
 data S = S {
   rA, rX, rY, rStack :: {-# UNPACK #-} !Int,
@@ -37,11 +47,17 @@ data S = S {
   pc :: {-# UNPACK #-} !Int,
   ticks :: {-# UNPACK #-} !Int
   }
-
-{-# INLINE fromBit #-}
-fromBit :: Bit (Step s) -> Int
-fromBit (Bit True) = 1
-fromBit (Bit False) = 0
+type Sf a = Int# -> Int# -> Int# -> Int# ->
+            Bool -> Bool -> Bool -> Bool -> Bool -> Bool ->
+            Int# -> Int# -> a
+{-# INLINE apply #-}
+apply :: Sf a -> S -> a
+apply func (S (I# a) (I# b) (I# c) (I# d) e f g h i j (I# k) (I# l))
+  = func a b c d e f g h i j k l
+{-# INLINE abs #-}
+abs :: (S -> a) -> Sf a
+abs func a b c d e f g h i j k l
+  = func (S (I# a) (I# b) (I# c) (I# d) e f g h i j (I# k) (I# l))
 
 {-# INLINE fromAddr #-}
 fromAddr :: Addr (Step s) -> Int
@@ -58,13 +74,13 @@ fromSignedByte (Byte x) = fromIntegral (fromIntegral x :: Int8)
 {-# INLINE peekMemory #-}
 peekMemory :: Addr (Step s) -> Step s Int
 peekMemory !addr = do
-  mem <- liftReader ask
+  mem <- mem
   liftM fromIntegral (liftST (unsafeRead mem (fromAddr addr)))
 
 {-# INLINE pokeMemory #-}
 pokeMemory :: Addr (Step s) -> Byte (Step s) -> Step s ()
 pokeMemory !addr !(Byte x) = do
-  mem <- liftReader ask
+  mem <- mem
   liftST (unsafeWrite mem (fromAddr addr) (fromIntegral x))
 
 instance Machine (Step s) where
@@ -76,35 +92,54 @@ instance Machine (Step s) where
   newtype Byte (Step s) = Byte Int
   newtype Bit (Step s) = Bit Bool
 
+  {-# INLINE address #-}
   address = Addr
+  {-# INLINE index #-}
   index (Addr x) b = Addr (x + fromSignedByte b)
+  {-# INLINE page #-}
   page (Addr x) = Byte (x `shiftR` 8)
+  {-# INLINE offset #-}
   offset (Addr x) = Byte x
   {-# INLINE paged #-}
   paged x y = Addr (fromByte x `shiftL` 8 + fromByte y)
+  {-# INLINE byte #-}
   byte = Byte
+  {-# INLINE bit #-}
   bit = Bit
 
+  {-# INLINE shl #-}
   shl (Byte x) = Byte (x `shiftL` 1)
+  {-# INLINE shr #-}
   shr x = Byte (fromByte x `shiftR` 1)
-  selectBit n (Byte x) = Bit (testBit x n)
-  oneBit n b = Byte (fromBit b `shiftL` n)
+  {-# INLINE selectBit #-}
+  selectBit n (Byte x) = Bit (x `testBit` n)
+  {-# INLINE oneBit #-}
+  oneBit n (Bit False) = Byte 0
+  oneBit n (Bit True) = Byte (Data.Bits.bit n)
+  {-# INLINE zero #-}
   zero (Byte x) = Bit (x == 0)
+  {-# INLINE eq #-}
   eq (Byte x) (Byte y) = Bit (x == y)
+  {-# INLINE geq #-}
   geq (Byte x) (Byte y) = Bit (x >= y)
   
+  {-# INLINE add #-}
   add (Byte x) (Byte y) = Byte (x + y)
   {-# INLINE carry #-}
   carry x y = Bit (fromByte x + fromByte y >= 256)
-  {-# INLINE toBCD #-}
+
   toBCD x =
     Byte (((fromByte x `div` 10) `shiftL` 4) + (fromByte x `mod` 10))
-  {-# INLINE fromBCD #-}
   fromBCD x =
     Byte (10*(fromByte x `shiftL` 4) + (fromByte x .&. 15))
+
+  {-# INLINE and_ #-}
   and_ (Byte x) (Byte y) = Byte (x .&. y)
+  {-# INLINE or_ #-}
   or_ (Byte x) (Byte y) = Byte (x .|. y)
+  {-# INLINE xor #-}
   xor (Byte x) (Byte y) = Byte (x `Data.Bits.xor` y)
+  {-# INLINE bitOr #-}
   bitOr (Bit x) (Bit y) = Bit (x || y)
 
   {-# INLINE memory #-}
@@ -112,39 +147,45 @@ instance Machine (Step s) where
     Location { peek = liftM Byte (peekMemory x),
                poke = pokeMemory x }
 
+  {-# INLINE register #-}
   register A = 
-    Location { peek = liftState (gets (Byte . rA)),
-               poke = \(Byte x) -> liftState (modify (\s -> s { rA = x })) }
+    Location { peek = gets (Byte . rA),
+               poke = \(Byte x) -> modify (\s -> s { rA = x }) }
 
   register X = 
-    Location { peek = liftState (gets (Byte . rX)),
-               poke = \(Byte x) -> liftState (modify (\s -> s { rX = x })) }
+    Location { peek = gets (Byte . rX),
+               poke = \(Byte x) -> modify (\s -> s { rX = x }) }
 
   register Y = 
-    Location { peek = liftState (gets (Byte . rY)),
-               poke = \(Byte x) -> liftState (modify (\s -> s { rY = x })) }
+    Location { peek = gets (Byte . rY),
+               poke = \(Byte x) -> modify (\s -> s { rY = x }) }
 
   register Stack = 
-    Location { peek = liftState (gets (Byte . rStack)),
-               poke = \(Byte x) -> liftState (modify (\s -> s { rStack = x })) }
+    Location { peek = gets (Byte . rStack),
+               poke = \(Byte x) -> modify (\s -> s { rStack = x }) }
 
-  flag Carry = liftState (gets (Bit . fCarry))
-  flag Zero = liftState (gets (Bit . fZero))
-  flag InterruptDisable = liftState (gets (Bit . fInterruptDisable))
-  flag Decimal = liftState (gets (Bit . fDecimal))
-  flag Overflow = liftState (gets (Bit . fOverflow))
-  flag Negative = liftState (gets (Bit . fNegative))
+  {-# INLINE flag #-}
+  flag Carry = gets (Bit . fCarry)
+  flag Zero = gets (Bit . fZero)
+  flag InterruptDisable = gets (Bit . fInterruptDisable)
+  flag Decimal = gets (Bit . fDecimal)
+  flag Overflow = gets (Bit . fOverflow)
+  flag Negative = gets (Bit . fNegative)
   
-  setFlag Carry (Bit x) = liftState (modify (\s -> s { fCarry = x }))
-  setFlag Zero (Bit x) = liftState (modify (\s -> s { fZero = x }))
-  setFlag InterruptDisable (Bit x) = liftState (modify (\s -> s { fInterruptDisable = x }))
-  setFlag Decimal (Bit x) = liftState (modify (\s -> s { fDecimal = x }))
-  setFlag Overflow (Bit x) = liftState (modify (\s -> s { fOverflow = x }))
-  setFlag Negative (Bit x) = liftState (modify (\s -> s { fNegative = x }))
+  {-# INLINE setFlag #-}
+  setFlag Carry (Bit x) = modify (\s -> s { fCarry = x })
+  setFlag Zero (Bit x) = modify (\s -> s { fZero = x })
+  setFlag InterruptDisable (Bit x) = modify (\s -> s { fInterruptDisable = x })
+  setFlag Decimal (Bit x) = modify (\s -> s { fDecimal = x })
+  setFlag Overflow (Bit x) = modify (\s -> s { fOverflow = x })
+  setFlag Negative (Bit x) = modify (\s -> s { fNegative = x })
 
-  loadPC = liftState (gets (Addr . pc))
-  storePC (Addr x) = liftState (modify (\s -> s { pc = x }))
+  {-# INLINE loadPC #-}
+  loadPC = gets (Addr . pc)
+  {-# INLINE storePC #-}
+  storePC (Addr x) = modify (\s -> s { pc = x })
 
+  {-# INLINE cond #-}
   cond (Bit x) p1 p2 = if x then p1 else p2
   {-# INLINE fetch #-}
   fetch = do
@@ -153,6 +194,5 @@ instance Machine (Step s) where
     storePC (Addr (pc+1))
     return (fromIntegral x)
 
-  tick !n = do
-    x <- liftState (gets ticks)
-    liftState (modify (\s -> s { ticks = x+n }))
+  {-# INLINE tick #-}
+  tick !n = modify (\s -> s { ticks = ticks s+n })

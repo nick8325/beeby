@@ -175,7 +175,6 @@ cpu = fetch >>= decode
         decode 0xb5 = do { tick 4; zpRel X >>= ldaMem }
         decode 0xad = do { tick 4; absolute >>= ldaMem }
         decode 0xbd = do { tick 4; indexed X >>= ldaMem }
-        decode _ = error "oops"
         decode 0xb9 = do { tick 4; indexed Y >>= ldaMem }
         decode 0xa1 = do { tick 6; indirectX >>= ldaMem }
         decode 0xb1 = do { tick 5; indirectY >>= ldaMem }
@@ -381,9 +380,9 @@ cpu = fetch >>= decode
         -- or a flag, because they have totally different control flow depending
         -- on which register or flag we choose.
         -- However, we often don't annotate first-order functions with
-        -- INLINE.
+        -- INLINE. We refuse to inline the BCD routines because
+        -- people with good taste wouldn't use them.
 
-        {-# INLINE ldaMem #-}
         ldaMem = ldMem A
         ldxMem = ldMem X
         ldyMem = ldMem Y
@@ -409,7 +408,6 @@ cpu = fetch >>= decode
           poke (register r2) x
           zeroNeg x
 
-        {-# INLINE php #-}
         php break = do
           b7 <- flag Negative
           b6 <- flag Overflow
@@ -425,6 +423,7 @@ cpu = fetch >>= decode
                 oneBit 5 (bit True) `add`
                 oneBit 6 b6 `add`
                 oneBit 7 b7)
+
         {-# INLINE plp #-}
         plp = do
           x <- pop
@@ -455,10 +454,12 @@ cpu = fetch >>= decode
           setFlag Overflow (selectBit 6 y)
 
         adcMem addr = peek (memory addr) >>= adc
+        {-# INLINE adc #-}
         adc x = do
           f <- flag Decimal
           cond f (adcBCD x) (adcNormal (register A) x)
           
+        {-# NOINLINE adcBCD #-}
         adcBCD x = adcNormal l (fromBCD x)
           where l = Location {
                   peek = liftM fromBCD (peek (register A)),
@@ -481,10 +482,12 @@ cpu = fetch >>= decode
           poke l z
 
         sbcMem addr = peek (memory addr) >>= sbc
+        {-# INLINE sbc #-}
         sbc x = do
           f <- flag Decimal
           cond f (sbcBCD x) (adcNormal (register A) (xor x (byte (-1))))
 
+        {-# NOINLINE sbcBCD #-}
         sbcBCD x = adcNormal l (xor (fromBCD x) (byte (-1)))
           where l = Location {
                   peek = liftM fromBCD (peek (register A)),
@@ -534,7 +537,9 @@ cpu = fetch >>= decode
           setFlag Carry c'
           zeroNeg x'
         
+        {-# INLINE leftRotate #-}
         leftRotate x c = (shl x `add` oneBit 0 c, selectBit 7 x)
+        {-# INLINE rightRotate #-}
         rightRotate x c = (shr x `add` oneBit 7 c, selectBit 0 x)
 
         jsr addr = do
