@@ -31,6 +31,7 @@ class Monad m => Machine m where
   
   address :: Int -> Addr m
   index :: Addr m -> Byte m -> Addr m
+  signedIndex :: Addr m -> Byte m -> Addr m
   page :: Addr m -> Byte m
   offset :: Addr m -> Byte m
   paged :: Byte m -> Byte m -> Addr m
@@ -145,7 +146,7 @@ relative = do
   -- should be relative to *final* value of pc
   x <- imm
   pc <- loadPC
-  return (pc `index` x)
+  return (pc `signedIndex` x)
 
 {-# INLINE indirect #-}
 indirect :: Machine m => m (Addr m)
@@ -550,7 +551,7 @@ cpu = fetch >>= decode
 
         jsr addr = do
           pc <- loadPC
-          push16 (pc `index` byte (-1))
+          push16 (pc `signedIndex` byte (-1))
           storePC addr
         
         rts = do
@@ -571,7 +572,7 @@ cpu = fetch >>= decode
 
         brk = do
           pc <- loadPC
-          push16 (pc `index` byte (-1))
+          push16 (pc `signedIndex` byte (-1))
           php (bit True)
           pc' <- peek16 (address 0xfffe)
           storePC pc'

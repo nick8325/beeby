@@ -101,7 +101,7 @@ peekMemory :: Addr Step -> Step Int
 peekMemory !addr = do
   mem <- mem
   res <- liftM fromIntegral (liftIO (unsafeRead mem (fromAddr addr)))
-  -- liftIO $ putStrLn $ " reading " ++ showHex res "" ++ " from address " ++ showHex (fromAddr addr) ""
+  liftIO $ putStrLn $ " reading " ++ showHex res "" ++ " from address " ++ showHex (fromAddr addr) ""
   return res
 
 {-# INLINE pokeMemory #-}
@@ -109,7 +109,7 @@ pokeMemory :: Addr Step -> Byte Step -> Step ()
 pokeMemory !addr !(Byte x) = do
   mem <- mem
   liftIO (unsafeWrite mem (fromAddr addr) (fromIntegral x))
-  when ((fromAddr addr >= 0xfe00 && fromAddr addr < 0xff00) || False) $
+  when ((fromAddr addr >= 0xfe00 && fromAddr addr < 0xff00) || True) $
     liftIO $
     putStrLn $ "writing " ++ showHex (fromByte (Byte x)) "" ++
                " to address " ++ showHex (fromAddr addr) ""
@@ -126,7 +126,9 @@ instance Machine Step where
   {-# INLINE address #-}
   address = Addr
   {-# INLINE index #-}
-  index (Addr x) b = Addr (x + fromSignedByte b)
+  index (Addr x) b = Addr (x + fromByte b)
+  {-# INLINE signedIndex #-}
+  signedIndex (Addr x) b = Addr (x + fromSignedByte b)
   {-# INLINE page #-}
   page (Addr x) = Byte (x `shiftR` 8)
   {-# INLINE offset #-}
