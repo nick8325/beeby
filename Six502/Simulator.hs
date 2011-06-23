@@ -64,8 +64,8 @@ instance Show S where
     showFlag "DF" fDecimal ++
     showFlag "OF" fOverflow ++
     showFlag "NF" fNegative ++
-    "PC=" ++ showHex (pc s) ""
-      where showReg name r = name ++ "=" ++ showHex (r s) " "
+    "PC=" ++ showHex (pc s `mod` 65536) ""
+      where showReg name r = name ++ "=" ++ showHex (r s `mod` 256) " "
             showFlag name f | f s = name ++ " "
                             | otherwise = ""
 
@@ -101,7 +101,7 @@ peekMemory :: Addr Step -> Step Int
 peekMemory !addr = do
   mem <- mem
   res <- liftM fromIntegral (liftIO (unsafeRead mem (fromAddr addr)))
-  liftIO $ putStrLn $ " reading " ++ showHex res "" ++ " from address " ++ showHex (fromAddr addr) ""
+  -- liftIO $ putStrLn $ " reading " ++ showHex res "" ++ " from address " ++ showHex (fromAddr addr) ""
   return res
 
 {-# INLINE pokeMemory #-}
@@ -109,7 +109,7 @@ pokeMemory :: Addr Step -> Byte Step -> Step ()
 pokeMemory !addr !(Byte x) = do
   mem <- mem
   liftIO (unsafeWrite mem (fromAddr addr) (fromIntegral x))
-  when ((fromAddr addr >= 0xfe00 && fromAddr addr < 0xff00) || True) $
+  when ((fromAddr addr >= 0xfe00 && fromAddr addr < 0xff00) || False) $
     liftIO $
     putStrLn $ "writing " ++ showHex (fromByte (Byte x)) "" ++
                " to address " ++ showHex (fromAddr addr) ""
@@ -148,11 +148,11 @@ instance Machine Step where
   oneBit n (Bit False) = Byte 0
   oneBit n (Bit True) = Byte (Data.Bits.bit n)
   {-# INLINE zero #-}
-  zero (Byte x) = Bit (x == 0)
+  zero x = Bit (fromByte x == 0)
   {-# INLINE eq #-}
-  eq (Byte x) (Byte y) = Bit (x == y)
+  eq x y = Bit (fromByte x == fromByte y)
   {-# INLINE geq #-}
-  geq (Byte x) (Byte y) = Bit (x >= y)
+  geq x y = Bit (fromByte x >= fromByte y)
   
   {-# INLINE add #-}
   add (Byte x) (Byte y) = Byte (x + y)

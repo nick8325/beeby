@@ -87,7 +87,7 @@ pop :: Machine m => m (Byte m)
 pop = do
   addr <- peek (register Stack)
   poke (register Stack) (add addr (byte 1))
-  peek (memory (stackPage addr))
+  peek (memory (stackPage (add addr (byte 1))))
 
 {-# INLINE push16 #-}
 push16 :: Machine m => Addr m -> m ()
@@ -318,7 +318,7 @@ cpu = fetch >>= decode
         decode 0xc6 = do { tick 5; zp >>= decMem }
         decode 0xd6 = do { tick 6; zpRel X >>= decMem }
         decode 0xce = do { tick 6; absolute >>= decMem }
-        decode 0xde = do { tick 7; absolute >>= decMem }
+        decode 0xde = do { tick 7; indexed X >>= decMem }
         -- DEX
         decode 0xca = do { tick 2; dec (register X) }
         -- DEY
@@ -482,7 +482,7 @@ cpu = fetch >>= decode
               x `equ` y = x `xor` y `xor` byte (-1)
           zeroNeg z
           setFlag Carry zc
-          setFlag Negative (selectBit 7 ((x `equ` y) `xor` z))
+          setFlag Overflow (selectBit 7 ((x `equ` y) `xor` z))
           -- important that this goes at the end so that poke can set the carry flag
           -- in BCD mode
           poke l z
@@ -504,9 +504,9 @@ cpu = fetch >>= decode
         {-# INLINE cmp #-}
         cmp r x = do
           y <- peek (register r)
-          setFlag Carry (y `geq` x)
-          setFlag Zero (zero (x `xor` y))
-          setFlag Negative (selectBit 7 (x `add` y))
+          setFlag Carry (bit True)
+          adcNormal (register r) (xor x (byte (-1)))
+          poke (register r) y
 
         incMem = inc . memory
         decMem = dec . memory
