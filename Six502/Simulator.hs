@@ -8,38 +8,41 @@ import GHC.Types
 import GHC.Prim
 import Six502
 import Control.Monad
-import Control.Monad.ST
-import Data.Array.ST
 import Data.Array.Base
+import Data.Array.IO
 import Data.Word
 import Data.Int
 import Data.Bits hiding (xor)
 import qualified Data.Bits
+import Numeric
 
-type Memory s = STUArray s Int Int8
-newtype Step s a = Step { run :: forall b. Memory s -> (a -> Sf (ST s b)) -> Sf (ST s b) }
+type Memory = IOUArray Int Word8
+newtype Step a = Step { run0 :: forall b. Memory -> (a -> Sf (IO b)) -> Sf (IO b) }
 
-instance Monad (Step s) where
+run :: Step a -> Memory -> S -> IO (a, S)
+run x !mem !state = apply (run0 x mem (\ !res -> abs (\ !state' -> return (res, state')))) state
+
+instance Monad Step where
   return x = Step (\ !_ k -> abs (\s -> apply (k x) s))
   x >>= f =
-    Step (\ !m k -> run x m (\y -> run (f y) m k))
+    Step (\ !m k -> run0 x m (\y -> run0 (f y) m k))
 
-forever :: Step s () -> Step s ()
+forever :: Step () -> Step ()
 forever x = Step (\ !m _ ->
-                   let k = run x m (const k)
+                   let k = run0 x m (const k)
                    in k)
 
-mem :: Step s (Memory s)
+mem :: Step Memory
 mem = Step (\ !m k -> k m)
 
-gets :: (S -> a) -> Step s a
+gets :: (S -> a) -> Step a
 gets f = Step (\ !m k -> abs (\s -> apply (k (f s)) s))
 
-modify :: (S -> S) -> Step s ()
+modify :: (S -> S) -> Step ()
 modify f = Step (\ !_ k -> abs (\s -> apply (k ()) (f s)))
 
-liftST :: ST s a -> Step s a
-liftST x = Step (\ !_ !k -> abs (\s -> x >>= \x' -> apply (k x') s))
+liftIO :: IO a -> Step a
+liftIO x = Step (\ !_ !k -> abs (\s -> x >>= \x' -> apply (k x') s))
 
 data S = S {
   rA, rX, rY, rStack :: {-# UNPACK #-} !Int,
@@ -47,6 +50,28 @@ data S = S {
   pc :: {-# UNPACK #-} !Int,
   ticks :: {-# UNPACK #-} !Int
   }
+         
+instance Show S where
+  show s =
+    show (ticks s) ++ " " ++
+    showReg "A" rA ++
+    showReg "X" rX ++
+    showReg "Y" rY ++
+    showReg "SP" rStack ++
+    showFlag "CF" fCarry ++
+    showFlag "ZF" fZero ++
+    showFlag "IF" fInterruptDisable ++
+    showFlag "DF" fDecimal ++
+    showFlag "OF" fOverflow ++
+    showFlag "NF" fNegative ++
+    "PC=" ++ showHex (pc s) ""
+      where showReg name r = name ++ "=" ++ showHex (r s) " "
+            showFlag name f | f s = name ++ " "
+                            | otherwise = ""
+
+s0 :: S
+s0 = S 0 0 0 0 False False False False False False 0 0
+
 type Sf a = Int# -> Int# -> Int# -> Int# ->
             Bool -> Bool -> Bool -> Bool -> Bool -> Bool ->
             Int# -> Int# -> a
@@ -60,37 +85,43 @@ abs func a b c d e f g h i j k l
   = func (S (I# a) (I# b) (I# c) (I# d) e f g h i j (I# k) (I# l))
 
 {-# INLINE fromAddr #-}
-fromAddr :: Addr (Step s) -> Int
+fromAddr :: Addr Step -> Int
 fromAddr (Addr x) = fromIntegral (fromIntegral x :: Word16)
 
 {-# INLINE fromByte #-}
-fromByte :: Byte (Step s) -> Int
+fromByte :: Byte Step -> Int
 fromByte (Byte x) = fromIntegral (fromIntegral x :: Word8)
 
 {-# INLINE fromSignedByte #-}
-fromSignedByte :: Byte (Step s) -> Int
+fromSignedByte :: Byte Step -> Int
 fromSignedByte (Byte x) = fromIntegral (fromIntegral x :: Int8)
 
 {-# INLINE peekMemory #-}
-peekMemory :: Addr (Step s) -> Step s Int
+peekMemory :: Addr Step -> Step Int
 peekMemory !addr = do
   mem <- mem
-  liftM fromIntegral (liftST (unsafeRead mem (fromAddr addr)))
+  res <- liftM fromIntegral (liftIO (unsafeRead mem (fromAddr addr)))
+  liftIO $ putStrLn $ " reading " ++ showHex res "" ++ " from address " ++ showHex (fromAddr addr) ""
+  return res
 
 {-# INLINE pokeMemory #-}
-pokeMemory :: Addr (Step s) -> Byte (Step s) -> Step s ()
+pokeMemory :: Addr Step -> Byte Step -> Step ()
 pokeMemory !addr !(Byte x) = do
   mem <- mem
-  liftST (unsafeWrite mem (fromAddr addr) (fromIntegral x))
+  liftIO (unsafeWrite mem (fromAddr addr) (fromIntegral x))
+  when ((fromAddr addr >= 0xfe00 && fromAddr addr < 0xff00) || True) $
+    liftIO $
+    putStrLn $ "writing " ++ showHex (fromByte (Byte x)) "" ++
+               " to address " ++ showHex (fromAddr addr) ""
 
-instance Machine (Step s) where
+instance Machine Step where
   -- It simplifies the generated code considerably to let GHC just use Ints everywhere.
   -- We let addresses and bytes be arbitrary integers, i.e., out-of-bounds:
   -- "Byte x" really represents the byte "x `mod` 256".
   -- We use fromByte and fromAddr to truncate the integers when necessary.
-  newtype Addr (Step s) = Addr Int
-  newtype Byte (Step s) = Byte Int
-  newtype Bit (Step s) = Bit Bool
+  newtype Addr Step = Addr Int
+  newtype Byte Step = Byte Int
+  newtype Bit Step = Bit Bool
 
   {-# INLINE address #-}
   address = Addr
@@ -171,7 +202,7 @@ instance Machine (Step s) where
   flag Decimal = gets (Bit . fDecimal)
   flag Overflow = gets (Bit . fOverflow)
   flag Negative = gets (Bit . fNegative)
-  
+
   {-# INLINE setFlag #-}
   setFlag Carry (Bit x) = modify (\s -> s { fCarry = x })
   setFlag Zero (Bit x) = modify (\s -> s { fZero = x })

@@ -71,19 +71,23 @@ class Monad m => Machine m where
 zeroPage :: Machine m => Byte m -> Addr m
 zeroPage = paged (byte 0)
 
+{-# INLINE stackPage #-}
+stackPage :: Machine m => Byte m -> Addr m
+stackPage = paged (byte 1)
+
 {-# INLINE push #-}
 push :: Machine m => Byte m -> m ()
 push x = do
   addr <- peek (register Stack)
   poke (register Stack) (add addr (byte (-1)))
-  poke (memory (zeroPage addr)) x
+  poke (memory (stackPage addr)) x
 
 {-# INLINE pop #-}
 pop :: Machine m => m (Byte m)
 pop = do
   addr <- peek (register Stack)
   poke (register Stack) (add addr (byte 1))
-  peek (memory (zeroPage addr))
+  peek (memory (stackPage addr))
 
 {-# INLINE push16 #-}
 push16 :: Machine m => Addr m -> m ()
@@ -373,6 +377,8 @@ cpu = fetch >>= decode
         decode 0xea = do { tick 2 }
         -- RTI
         decode 0x40 = do { tick 6; rti }
+        -- unknown
+        decode x = error $ "unknown opcode " ++ show x
 
         -- We mark absolutely every higher-order function for inlining,
         -- so as to straighten the control flow out.
@@ -579,3 +585,11 @@ cpu = fetch >>= decode
         zeroNeg v = do
           setFlag Zero (zero v)
           setFlag Negative (selectBit 7 v)
+
+{-# INLINE reset #-}
+reset ::Machine m => m ()
+reset = do
+  peek16 (address 0xfffc) >>= storePC
+  setFlag InterruptDisable (bit True)
+  setFlag Decimal (bit False)
+  poke (register Stack) (byte 0xff)
