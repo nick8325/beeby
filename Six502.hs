@@ -64,8 +64,9 @@ class Monad m => Machine m where
   storePC :: Addr m -> m ()
 
   cond :: Bit m -> m a -> m a -> m a
+  case_ :: Byte m -> (Int -> m a) -> m a
 
-  fetch :: m Int
+  fetch :: m (Byte m)
   tick :: Int -> m ()
 
 {-# INLINE zeroPage #-}
@@ -112,18 +113,18 @@ peek16 addr = do
 
 {-# INLINE imm #-}
 imm :: Machine m => m (Byte m)
-imm = liftM byte fetch
+imm = fetch
 
 {-# INLINE zp #-}
 zp :: Machine m => m (Addr m)
-zp = liftM (zeroPage . byte) fetch
+zp = liftM zeroPage fetch
 
 {-# INLINE zpRel #-}
 zpRel :: Machine m => Register -> m (Addr m)
 zpRel r = do
   x <- fetch
   y <- peek (register r)
-  return (zeroPage (add (byte x) y))
+  return (zeroPage (add x y))
 
 {-# INLINE absolute #-}
 absolute :: Machine m => m (Addr m)
@@ -160,20 +161,20 @@ indirectX :: Machine m => m (Addr m)
 indirectX = do
   x <- fetch
   y <- peek (register X)
-  addr <- peek16 (zeroPage (add (byte x) y))
+  addr <- peek16 (zeroPage (add x y))
   return addr
 
 {-# INLINE indirectY #-}
 indirectY :: Machine m => m (Addr m)
 indirectY = do
   x <- fetch
-  addr <- peek16 (zeroPage (byte x))
+  addr <- peek16 (zeroPage x)
   y <- peek (register Y)
   return (addr `index` y)
 
 {-# INLINE cpu #-}
 cpu :: Machine m => m ()
-cpu = fetch >>= decode
+cpu = fetch >>= flip case_ decode
   where -- LDA
         decode 0xa9 = do { tick 2; imm >>= ld A }
         decode 0xa5 = do { tick 3; zp >>= ldaMem }

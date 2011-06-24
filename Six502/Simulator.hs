@@ -220,12 +220,14 @@ instance Machine Step where
 
   {-# INLINE cond #-}
   cond (Bit x) p1 p2 = if x then p1 else p2
+  {-# INLINE case_ #-}
+  case_ x f = f (fromByte x)
   {-# INLINE fetch #-}
   fetch = do
     addr@(Addr pc) <- loadPC
     x <- peekMemory addr
     storePC (Addr (pc+1))
-    return (fromIntegral x)
+    return (Byte (fromIntegral x))
 
   {-# INLINE tick #-}
   tick !n = modify (\s -> s { ticks = ticks s+n })
