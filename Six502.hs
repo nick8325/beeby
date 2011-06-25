@@ -111,6 +111,12 @@ peek16 addr = do
   y <- peek (memory (addr `index` byte 1))
   return (paged y x)
 
+{-# INLINE rts #-}
+rts :: Machine m => m ()
+rts = do
+  pc <- pop16
+  storePC (pc `index` byte 1)
+
 {-# INLINE imm #-}
 imm :: Machine m => m (Byte m)
 imm = fetch
@@ -554,10 +560,6 @@ cpu = fetch >>= flip case_ decode
           pc <- loadPC
           push16 (pc `signedIndex` byte (-1))
           storePC addr
-        
-        rts = do
-          pc <- pop16
-          storePC (pc `index` byte 1)
 
         {-# INLINE branchIf #-}
         branchIf f = do
@@ -589,7 +591,7 @@ cpu = fetch >>= flip case_ decode
           setFlag Negative (selectBit 7 v)
 
 {-# INLINE reset #-}
-reset ::Machine m => m ()
+reset :: Machine m => m ()
 reset = do
   peek16 (address 0xfffc) >>= storePC
   setFlag InterruptDisable (bit True)
