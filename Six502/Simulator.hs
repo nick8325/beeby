@@ -12,7 +12,7 @@ import Data.Array.Base
 import Data.Array.IO
 import Data.Word
 import Data.Int
-import Data.Bits hiding (xor)
+import Data.Bits hiding (xor, bit)
 import qualified Data.Bits
 import Numeric
 
@@ -46,7 +46,7 @@ liftIO x = Step (\ !_ !k -> abs (\s -> x >>= \x' -> apply (k x') s))
 
 data S = S {
   rA, rX, rY, rStack :: {-# UNPACK #-} !Int,
-  fCarry, fZero, fInterruptDisable, fDecimal, fOverflow, fNegative :: !Bool,
+  fCarry, fZero, fInterruptDisable, fDecimal, fOverflow, fNegative :: {-# UNPACK #-} !Int,
   pc :: {-# UNPACK #-} !Int,
   ticks :: {-# UNPACK #-} !Int
   }
@@ -66,23 +66,23 @@ instance Show S where
     showFlag "NF" fNegative ++
     "PC=" ++ showHex (pc s `mod` 65536) ""
       where showReg name r = name ++ "=" ++ showHex (r s `mod` 256) " "
-            showFlag name f | f s = name ++ " "
+            showFlag name f | f s /= 0 = name ++ " "
                             | otherwise = ""
 
 s0 :: S
-s0 = S 0 0 0 0 False False False False False False 0 0
+s0 = S 0 0 0 0 1 1 1 1 1 1 0 0
 
 type Sf a = Int# -> Int# -> Int# -> Int# ->
-            Bool -> Bool -> Bool -> Bool -> Bool -> Bool ->
+            Int# -> Int# -> Int# -> Int# -> Int# -> Int# ->
             Int# -> Int# -> a
 {-# INLINE apply #-}
 apply :: Sf a -> S -> a
-apply func (S (I# a) (I# b) (I# c) (I# d) e f g h i j (I# k) (I# l))
+apply func (S (I# a) (I# b) (I# c) (I# d) (I# e) (I# f) (I# g) (I# h) (I# i) (I# j) (I# k) (I# l))
   = func a b c d e f g h i j k l
 {-# INLINE abs #-}
 abs :: (S -> a) -> Sf a
 abs func a b c d e f g h i j k l
-  = func (S (I# a) (I# b) (I# c) (I# d) e f g h i j (I# k) (I# l))
+  = func (S (I# a) (I# b) (I# c) (I# d) (I# e) (I# f) (I# g) (I# h) (I# i) (I# j) (I# k) (I# l))
 
 {-# INLINE fromAddr #-}
 fromAddr :: Addr Step -> Int
@@ -121,7 +121,8 @@ instance Machine Step where
   -- We use fromByte and fromAddr to truncate the integers when necessary.
   newtype Addr Step = Addr Int
   newtype Byte Step = Byte Int
-  newtype Bit Step = Bit Bool
+  -- Representation: 0 is true, anything else is false
+  newtype Bit Step = Bit Int
 
   {-# INLINE address #-}
   address = Addr
@@ -138,28 +139,29 @@ instance Machine Step where
   {-# INLINE byte #-}
   byte = Byte
   {-# INLINE bit #-}
-  bit = Bit
+  bit False = Bit (-1)
+  bit True = Bit 0
 
   {-# INLINE shl #-}
   shl (Byte x) = Byte (x `shiftL` 1)
   {-# INLINE shr #-}
   shr x = Byte (fromByte x `shiftR` 1)
   {-# INLINE selectBit #-}
-  selectBit n (Byte x) = Bit (x `testBit` n)
+  selectBit n (Byte x) = Bit (complement x .&. Data.Bits.bit n)
   {-# INLINE oneBit #-}
-  oneBit n (Bit False) = Byte 0
-  oneBit n (Bit True) = Byte (Data.Bits.bit n)
+  oneBit n (Bit 0) = Byte (Data.Bits.bit n)
+  oneBit n (Bit _) = Byte 0
   {-# INLINE zero #-}
-  zero x = Bit (fromByte x == 0)
+  zero x = Bit (fromByte x)
   {-# INLINE eq #-}
-  eq x y = Bit (fromByte x == fromByte y)
+  eq x y = Bit (fromByte x `Data.Bits.xor` fromByte y)
   {-# INLINE geq #-}
-  geq x y = Bit (fromByte x >= fromByte y)
+  geq x y = Bit ((fromByte x - fromByte y) .&. minBound)
   
   {-# INLINE add #-}
   add (Byte x) (Byte y) = Byte (x + y)
   {-# INLINE carry #-}
-  carry x y = Bit (fromByte x + fromByte y >= 256)
+  carry x y = Bit (((fromByte x + fromByte y) .&. 256) `Data.Bits.xor` 256)
 
   toBCD x =
     Byte (((fromByte x `div` 10) `shiftL` 4) + (fromByte x `mod` 10))
@@ -173,7 +175,8 @@ instance Machine Step where
   {-# INLINE xor #-}
   xor (Byte x) (Byte y) = Byte (x `Data.Bits.xor` y)
   {-# INLINE bitOr #-}
-  bitOr (Bit x) (Bit y) = Bit (x || y)
+  bitOr (Bit 0) _ = Bit 0
+  bitOr _ (Bit y) = Bit y
 
   {-# INLINE memory #-}
   memory x =
@@ -219,7 +222,7 @@ instance Machine Step where
   storePC (Addr x) = modify (\s -> s { pc = x })
 
   {-# INLINE cond #-}
-  cond (Bit x) p1 p2 = if x then p1 else p2
+  cond (Bit x) p1 p2 = if x == 0 then p1 else p2
   {-# INLINE case_ #-}
   case_ x f = f (fromByte x)
   {-# INLINE fetch #-}
