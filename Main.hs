@@ -37,10 +37,8 @@ pokeMemory1 mem addr v | not (sheila addr) = writeByteArray mem addr v
                        | otherwise = return ()
 
 instance Memory Mem where
-  {-# INLINE fetchMemory #-}
   fetchMemory mem addr = readByteArray mem addr
   peekMemory !mem !addr = BARRIER((# w, W8# x #), (# w, x #)) (peekMemory1 mem addr)
-  {-# INLINE pokeMemory #-}
   pokeMemory !mem !addr !v = BARRIER((# w, () #), w) (writeByteArray mem addr v)
 
 main = do
