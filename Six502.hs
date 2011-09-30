@@ -68,6 +68,7 @@ class Monad m => Machine m where
 
   fetch :: m (Byte m)
   tick :: Int -> m ()
+  machineError :: String -> m a
 
 {-# INLINE zeroPage #-}
 zeroPage :: Machine m => Byte m -> Addr m
@@ -386,7 +387,7 @@ cpu = fetch >>= flip case_ decode
         -- RTI
         decode 0x40 = do { tick 6; rti }
         -- unknown
-        decode x = error $ "unknown opcode " ++ show x
+        decode x = machineError $ "unknown opcode " ++ show x
 
         -- We mark absolutely every higher-order function for inlining,
         -- so as to straighten the control flow out.

@@ -218,3 +218,6 @@ instance Memory mem => Machine (Step mem) where
 
   {-# INLINE tick #-}
   tick !n = modify (\s -> s { ticks = ticks s+n })
+
+  {-# INLINE machineError #-}
+  machineError = error

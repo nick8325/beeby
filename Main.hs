@@ -17,29 +17,31 @@ sheila addr = addr >= 0xfe00 && addr < 0xff00
 type Mem = MutableByteArray RealWorld
 
 -- Nasty stuff: manually do worker/wrapper transform while NOINLINEing the worker.
-#define BARRIER \
-  (\from to m -> \
+#define BARRIER(FROM, TO) \
+  (\m -> \
   let { \
       {-# NOINLINE worker #-}; \
       worker world = \
         let IO f = m in \
-        case f world of (# world', x #) -> (# world', from x #) } in \
-  IO (\world -> case worker world of (# world', x #) -> (# world', to x #)))
-
-peekMemory0 !mem !addr = BARRIER (\(W8# x) -> x) W8# (peekMemory1 mem addr)
+        case f world of FROM -> TO } in \
+  IO (\world -> case worker world of TO -> FROM))
 
 {-# INLINE peekMemory1 #-}
 peekMemory1 :: Mem -> Int -> IO Word8
 peekMemory1 mem addr | not (sheila addr) = readByteArray mem addr
                      | otherwise = return 0
 
+{-# INLINE pokeMemory1 #-}
+pokeMemory1 :: Mem -> Int -> Word8 -> IO ()
+pokeMemory1 mem addr v | not (sheila addr) = writeByteArray mem addr v
+                       | otherwise = return ()
+
 instance Memory Mem where
   {-# INLINE fetchMemory #-}
   fetchMemory mem addr = readByteArray mem addr
-  {-# INLINE peekMemory #-}
-  peekMemory = peekMemory0
+  peekMemory !mem !addr = BARRIER((# w, W8# x #), (# w, x #)) (peekMemory1 mem addr)
   {-# INLINE pokeMemory #-}
-  pokeMemory mem addr v = writeByteArray mem addr v
+  pokeMemory !mem !addr !v = BARRIER((# w, () #), w) (writeByteArray mem addr v)
 
 main = do
   rom <- BS.readFile "OS12.ROM"
