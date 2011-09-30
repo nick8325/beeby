@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, BangPatterns, MagicHash, UnboxedTuples #-}
+{-# LANGUAGE FlexibleInstances, BangPatterns, MagicHash, UnboxedTuples, TypeSynonymInstances, KindSignatures, CPP #-}
 import Control.Monad hiding (forever)
 import Six502.Simulator
 import Six502
@@ -10,29 +10,41 @@ import System.IO
 import Data.Word
 import Data.Bits hiding (bit, xor)
 import qualified Data.Bits
+import Data.Primitive.ByteArray
 
 sheila addr = addr >= 0xfe00 && addr < 0xff00
 
-data Mem = Mem { unMem :: MutableByteArray# RealWorld }
+type Mem = MutableByteArray RealWorld
 
-{-# NOINLINE peekMemory# #-}
-peekMemory# :: Mem -> Int# -> State# RealWorld -> (# State# RealWorld, Word# #)
-peekMemory# (Mem x) addr world | not (sheila (I# addr)) = readWord8Array# x addr world
-                               | otherwise = (# world, case 0 of (W8# x) -> x #)
+-- Nasty stuff: manually do worker/wrapper transform while NOINLINEing the worker.
+#define BARRIER \
+  (\from to m -> \
+  let { \
+      {-# NOINLINE worker #-}; \
+      worker world = \
+        let IO f = m in \
+        case f world of (# world', x #) -> (# world', from x #) } in \
+  IO (\world -> case worker world of (# world', x #) -> (# world', to x #)))
+
+peekMemory0 !mem !addr = BARRIER (\(W8# x) -> x) W8# (peekMemory1 mem addr)
+
+{-# INLINE peekMemory1 #-}
+peekMemory1 :: Mem -> Int -> IO Word8
+peekMemory1 mem addr | not (sheila addr) = readByteArray mem addr
+                     | otherwise = return 0
 
 instance Memory Mem where
   {-# INLINE fetchMemory #-}
-  fetchMemory (Mem x) (I# addr) = IO (\world -> case readWord8Array# x addr world of (# world', x #) -> (# world', W8# x #))
+  fetchMemory mem addr = readByteArray mem addr
   {-# INLINE peekMemory #-}
-  peekMemory !mem (I# addr) = 
-    IO (\world -> case peekMemory# mem addr world of (# world', x #) -> (# world', W8# x #))
+  peekMemory = peekMemory0
   {-# INLINE pokeMemory #-}
-  pokeMemory (Mem x) (I# addr) (W8# v) = IO (\world -> (# writeWord8Array# x addr v world, () #))
+  pokeMemory mem addr v = writeByteArray mem addr v
 
 main = do
   rom <- BS.readFile "OS12.ROM"
   basic <- BS.readFile "BASIC2.ROM"
-  arr <- IO (\world -> case newByteArray# 0x10000# world of (# world', x #) -> (# world', Mem x #))
+  arr <- newByteArray 0x10000
   let blit str !ofs
         | BS.null str = return ()
         | otherwise = do
