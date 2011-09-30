@@ -8,40 +8,42 @@ import GHC.Types
 import GHC.Prim
 import Six502
 import Control.Monad
-import Data.Array.Base
-import Data.Array.IO
 import Data.Word
 import Data.Int
 import Data.Bits hiding (xor, bit)
 import qualified Data.Bits
 import Numeric
 
-type Memory = IOUArray Int Word8
-newtype Step a = Step { run0 :: forall b. Memory -> (a -> Sf (IO b)) -> Sf (IO b) }
+class Memory mem where
+  fetchMemory :: mem -> Int -> IO Word8
+  peekMemory :: mem -> Int -> IO Word8
+  pokeMemory :: mem -> Int -> Word8 -> IO ()
 
-run :: Step a -> Memory -> S -> IO (a, S)
+newtype Step mem a = Step { run0 :: forall b. mem -> (a -> Sf (IO b)) -> Sf (IO b) }
+
+run :: Step mem a -> mem -> S -> IO (a, S)
 run x !mem !state = apply (run0 x mem (\ !res -> abs (\ !state' -> return (res, state')))) state
 
-instance Monad Step where
+instance Monad (Step mem) where
   return x = Step (\ !_ k -> abs (\s -> apply (k x) s))
   x >>= f =
     Step (\ !m k -> run0 x m (\y -> run0 (f y) m k))
 
-forever :: Step () -> Step ()
+forever :: Step mem () -> Step mem ()
 forever x = Step (\ !m _ ->
                    let k = run0 x m (const k)
                    in k)
 
-mem :: Step Memory
+mem :: Step mem mem
 mem = Step (\ !m k -> k m)
 
-gets :: (S -> a) -> Step a
+gets :: (S -> a) -> Step mem a
 gets f = Step (\ !m k -> abs (\s -> apply (k (f s)) s))
 
-modify :: (S -> S) -> Step ()
+modify :: (S -> S) -> Step mem ()
 modify f = Step (\ !_ k -> abs (\s -> apply (k ()) (f s)))
 
-liftIO :: IO a -> Step a
+liftIO :: IO a -> Step mem a
 liftIO x = Step (\ !_ !k -> abs (\s -> x >>= \x' -> apply (k x') s))
 
 data S = S {
@@ -85,44 +87,26 @@ abs func a b c d e f g h i j k l
   = func (S (I# a) (I# b) (I# c) (I# d) (I# e) (I# f) (I# g) (I# h) (I# i) (I# j) (I# k) (I# l))
 
 {-# INLINE fromAddr #-}
-fromAddr :: Addr Step -> Int
+fromAddr :: Addr (Step mem) -> Int
 fromAddr (Addr x) = fromIntegral (fromIntegral x :: Word16)
 
 {-# INLINE fromByte #-}
-fromByte :: Byte Step -> Int
+fromByte :: Byte (Step mem) -> Int
 fromByte (Byte x) = fromIntegral (fromIntegral x :: Word8)
 
 {-# INLINE fromSignedByte #-}
-fromSignedByte :: Byte Step -> Int
+fromSignedByte :: Byte (Step mem) -> Int
 fromSignedByte (Byte x) = fromIntegral (fromIntegral x :: Int8)
 
-{-# INLINE peekMemory #-}
-peekMemory :: Addr Step -> Step Int
-peekMemory !addr = do
-  mem <- mem
-  res <- liftM fromIntegral (liftIO (unsafeRead mem (fromAddr addr)))
-  -- liftIO $ putStrLn $ " reading " ++ showHex res "" ++ " from address " ++ showHex (fromAddr addr) ""
-  return res
-
-{-# INLINE pokeMemory #-}
-pokeMemory :: Addr Step -> Byte Step -> Step ()
-pokeMemory !addr !(Byte x) = do
-  mem <- mem
-  liftIO (unsafeWrite mem (fromAddr addr) (fromIntegral x))
-  -- when ((fromAddr addr >= 0xfe00 && fromAddr addr < 0xff00) || True) $
-  --   liftIO $
-  --   putStrLn $ "writing " ++ showHex (fromByte (Byte x)) "" ++
-  --              " to address " ++ showHex (fromAddr addr) ""
-
-instance Machine Step where
+instance Memory mem => Machine (Step mem) where
   -- It simplifies the generated code considerably to let GHC just use Ints everywhere.
   -- We let addresses and bytes be arbitrary integers, i.e., out-of-bounds:
   -- "Byte x" really represents the byte "x `mod` 256".
   -- We use fromByte and fromAddr to truncate the integers when necessary.
-  newtype Addr Step = Addr Int
-  newtype Byte Step = Byte Int
+  newtype Addr (Step mem) = Addr Int
+  newtype Byte (Step mem) = Byte Int
   -- Representation: 0 is true, anything else is false
-  newtype Bit Step = Bit Int
+  newtype Bit (Step mem) = Bit Int
 
   {-# INLINE address #-}
   address = Addr
@@ -180,9 +164,8 @@ instance Machine Step where
 
   {-# INLINE memory #-}
   memory x =
-    Location { peek = liftM Byte (peekMemory x),
-               poke = pokeMemory x }
-
+    Location { peek = do { m <- mem; liftM (Byte . fromIntegral) (liftIO (peekMemory m (fromAddr x))) },
+               poke = \(Byte v) -> do { m <- mem; liftIO (pokeMemory m (fromAddr x) (fromIntegral v)) } }
   {-# INLINE register #-}
   register A = 
     Location { peek = gets (Byte . rA),
@@ -228,7 +211,8 @@ instance Machine Step where
   {-# INLINE fetch #-}
   fetch = do
     addr@(Addr pc) <- loadPC
-    x <- peekMemory addr
+    m <- mem
+    x <- liftIO (fetchMemory m (fromAddr addr))
     storePC (Addr (pc+1))
     return (Byte (fromIntegral x))
 
