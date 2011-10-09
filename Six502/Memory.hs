@@ -27,7 +27,7 @@ class MemorylessMachine m => AddressSpace m a where
   pokeAddress :: a -> Addr m -> Byte m -> m ()
 
 -- An I/O device overlayed on top of an address space.
-data Overlay a b = Overlay !a !b
+data Overlay a b = Overlay a b
 
 instance (IODevice a, IOMachine m, AddressSpace m b) => AddressSpace m (Overlay a b) where
   fetchAddress (Overlay _ mem) = fetchAddress mem
