@@ -1,0 +1,10 @@
+\#*\#
+.\#*
+/.dist-scion
+/dist
+/doc
+/Main
+*.o
+*.p_o
+*.hi
+*.swp
