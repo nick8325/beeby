@@ -1,26 +1,31 @@
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, BangPatterns #-}
+module Main(main) where
+
 import Control.Monad hiding (forever)
-import Six502.Simulator
-import Six502
+import Six502.Machine
+import Six502.Interpreter
 import Six502.Memory
+import Six502.CPU
 import qualified Data.ByteString as BS
 import System.IO
 import Data.Word
 import Data.Bits hiding (bit, xor)
 import qualified Data.Bits
 import Numeric
+import Data.Primitive.ByteArray
 
 data Sheila = Sheila
 
 {-# NOINLINE myExpensiveThing #-}
+myExpensiveThing :: () -> IO ()
 myExpensiveThing () = return ()
 
-instance IOMemory Sheila where
-  visible _ addr = addr >= 0xfe00 && addr < 0xff00
-  peekMemory _ addr = myExpensiveThing () >> return 0
-  pokeMemory _ addr v = myExpensiveThing () >> return ()
+instance IOMachine m => IODevice m Sheila where
+  visible _ addr = page addr `eq` byte 0xfe
+  peekDevice _ = peekIO (\_ -> myExpensiveThing () >> return 0)
+  pokeDevice _ = pokeIO (\_ _ -> myExpensiveThing () >> return ())
 
-type Mem m = Overlay m Sheila (RAM m)
+type Mem = Overlay Sheila RAM
 
 main = do
   rom <- BS.readFile "OS12.ROM"
@@ -29,7 +34,7 @@ main = do
   let blit str !ofs
         | BS.null str = return ()
         | otherwise = do
-          pokeMemory arr ofs (fromIntegral (BS.head str))
+          writeByteArray arr ofs (fromIntegral (BS.head str) :: Word8)
           blit (BS.tail str) (ofs+1)
       fill c from to = blit (BS.replicate (to - from) c) from
       -- dump = return ()
@@ -69,7 +74,7 @@ main = do
       --     0xffee -> syscall oswrch
       --     0xe0a4 -> syscall oswrch
       --     _ -> return ()
-      loop :: Step (Mem (Step mem)) ()
+      loop :: Step Mem ()
       loop = reset >> forever (dump >> cpu)
   blit basic 0x8000
   blit rom 0xc000

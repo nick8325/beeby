@@ -1,12 +1,12 @@
-{-# LANGUAGE BangPatterns, TypeFamilies, Rank2Types, TypeSynonymInstances #-}
--- A 6502 simulator.
+-- An interpreter backend for the 6502 emulator.
 
-module Six502.Simulator where
+{-# LANGUAGE FlexibleInstances, UndecidableInstances, FlexibleContexts, BangPatterns, TypeFamilies, Rank2Types, TypeSynonymInstances, MultiParamTypeClasses #-}
+module Six502.Interpreter where
 
 import Prelude hiding (abs)
 import GHC.Prim
 import Data.Primitive.ByteArray
-import Six502
+import Six502.Machine
 import Six502.Memory
 import Control.Monad
 import Data.Word
@@ -15,31 +15,18 @@ import Data.Bits hiding (xor, bit)
 import qualified Data.Bits
 import Numeric
 
-instance MachineMemory (Step mem) where
-  type RAM (Step mem) = StepRAM
-  type Overlay (Step mem) = StepOverlay
+type RAM = MutableByteArray RealWorld
 
-newtype StepRAM = RAM (MutableByteArray RealWorld)
+newRAM :: IO RAM
+newRAM = newByteArray 0x10000
 
-newRAM :: IO StepRAM
-newRAM = fmap RAM (newByteArray 0x10000)
+instance AddressSpace (Step mem) RAM where
+  peekAddress mem = peekIO (readByteArray mem)
+  pokeAddress mem = pokeIO (writeByteArray mem)
 
-instance IOMemory StepRAM where
-  visible _ _ = True
-  peekMemory (RAM mem) addr = readByteArray mem addr
-  pokeMemory (RAM mem) addr v = writeByteArray mem addr v
-
-data StepOverlay a b = Overlay !a !b
-
-instance (IOMemory a, IOMemory b) => IOMemory (StepOverlay a b) where
-  visible (Overlay x y) addr = visible x addr || visible y addr
-  -- Slightly incorrect emulation:
-  -- assume that we never fetch instructions from I/O memory.
-  fetchMemory (Overlay x y) = fetchMemory y
-  peekMemory (Overlay x y) addr | visible x addr = peekMemory x addr
-                                | otherwise = peekMemory y addr
-  pokeMemory (Overlay x y) addr v | visible x addr = pokeMemory x addr v
-                                  | otherwise = pokeMemory y addr v
+instance IOMachine (Step mem) where
+  peekIO f addr = liftM (Byte . fromIntegral) (liftIO (f (fromAddr addr)))
+  pokeIO f addr (Byte v) = liftIO (f (fromAddr addr) (fromIntegral v))
 
 newtype Step mem a = Step { run0 :: forall b. mem -> (a -> S -> IO b) -> S -> IO b }
 
@@ -108,7 +95,7 @@ fromByte (Byte x) = fromIntegral (fromIntegral x :: Word8)
 fromSignedByte :: Byte (Step mem) -> Int
 fromSignedByte (Byte x) = fromIntegral (fromIntegral x :: Int8)
 
-instance IOMemory mem => Machine (Step mem) where
+instance MemorylessMachine (Step mem) where
   -- It simplifies the generated code considerably to let GHC just use Ints everywhere.
   -- We let addresses and bytes be arbitrary integers, i.e., out-of-bounds:
   -- "Byte x" really represents the byte "x `mod` 256".
@@ -172,10 +159,6 @@ instance IOMemory mem => Machine (Step mem) where
   bitOr (Bit 0) _ = Bit 0
   bitOr _ (Bit y) = Bit y
 
-  {-# INLINE memory #-}
-  memory x =
-    Location { peek = do { m <- mem; liftM (Byte . fromIntegral) (liftIO (peekMemory m (fromAddr x))) },
-               poke = \(Byte v) -> do { m <- mem; liftIO (pokeMemory m (fromAddr x) (fromIntegral v)) } }
   {-# INLINE register #-}
   register A = 
     Location { peek = gets (Byte . rA),
@@ -218,16 +201,21 @@ instance IOMemory mem => Machine (Step mem) where
   cond (Bit x) p1 p2 = if x == 0 then p1 else p2
   {-# INLINE case_ #-}
   case_ x f = f (fromByte x)
-  {-# INLINE fetch #-}
-  fetch = do
-    addr@(Addr pc) <- loadPC
-    m <- mem
-    x <- liftIO (fetchMemory m (fromAddr addr))
-    storePC (Addr (pc+1))
-    return (Byte (fromIntegral x))
 
   {-# INLINE tick #-}
   tick !n = modify (\s -> s { ticks = ticks s+n })
 
   {-# INLINE machineError #-}
   machineError = error
+
+instance AddressSpace (Step mem) mem => Machine (Step mem) where
+  {-# INLINE memory #-}
+  memory addr =
+    Location { peek = do { m <- mem; peekAddress m addr },
+               poke = \v -> do { m <- mem; pokeAddress m addr v } }
+  {-# INLINE fetch #-}
+  fetch = do
+    addr@(Addr pc) <- loadPC
+    storePC (Addr (pc+1))
+    m <- mem
+    fetchAddress m addr

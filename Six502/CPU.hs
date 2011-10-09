@@ -4,9 +4,10 @@
 -- use the same code for interpreting and JITting.
 
 {-# LANGUAGE BangPatterns, TypeFamilies, MultiParamTypeClasses, FunctionalDependencies #-}
-module Six502 where
+module Six502.CPU where
 
 import Control.Monad
+import Six502.Machine
 
 -- 6502 documentation from
 -- http://www.obelisk.demon.co.uk/6502/
@@ -16,59 +17,6 @@ import Control.Monad
 -- http://www.6502.org/tutorials/decimal_mode.html
 -- BRK instruction:
 -- http://nesdev.parodius.com/the%20'B'%20flag%20&%20BRK%20instruction.txt
-
-data Flag = Carry | Zero | InterruptDisable | Decimal | Overflow | Negative
-data Register = A | X | Y | Stack
-
-data Location m =
-  Location { peek :: m (Byte m),
-             poke :: Byte m -> m () }
-
-class Monad m => Machine m where
-  data Addr m
-  data Byte m
-  data Bit m
-  
-  address :: Int -> Addr m
-  index :: Addr m -> Byte m -> Addr m
-  signedIndex :: Addr m -> Byte m -> Addr m
-  page :: Addr m -> Byte m
-  offset :: Addr m -> Byte m
-  paged :: Byte m -> Byte m -> Addr m
-  byte :: Int -> Byte m
-  bit :: Bool -> Bit m
-
-  shl :: Byte m -> Byte m
-  shr :: Byte m -> Byte m
-  selectBit :: Int -> Byte m -> Bit m
-  oneBit :: Int -> Bit m -> Byte m
-  zero :: Byte m -> Bit m
-  eq :: Byte m -> Byte m -> Bit m
-  geq :: Byte m -> Byte m -> Bit m
-
-  add :: Byte m -> Byte m -> Byte m
-  carry :: Byte m -> Byte m -> Bit m
-  toBCD :: Byte m -> Byte m
-  fromBCD :: Byte m -> Byte m
-  
-  and_ :: Byte m -> Byte m -> Byte m
-  or_ :: Byte m -> Byte m -> Byte m
-  xor :: Byte m -> Byte m -> Byte m
-  bitOr :: Bit m -> Bit m -> Bit m
-
-  memory :: Addr m -> Location m
-  register :: Register -> Location m
-  flag :: Flag -> m (Bit m)
-  setFlag :: Flag -> Bit m -> m ()
-  loadPC :: m (Addr m)
-  storePC :: Addr m -> m ()
-
-  cond :: Bit m -> m a -> m a -> m a
-  case_ :: Byte m -> (Int -> m a) -> m a
-
-  fetch :: m (Byte m)
-  tick :: Int -> m ()
-  machineError :: String -> m a
 
 {-# INLINE zeroPage #-}
 zeroPage :: Machine m => Byte m -> Addr m
