@@ -20,10 +20,10 @@ data Sheila = Sheila
 myExpensiveThing :: () -> IO ()
 myExpensiveThing () = return ()
 
-instance IOMachine m => IODevice m Sheila where
-  visible _ addr = page addr `eq` byte 0xfe
-  peekDevice _ = peekIO (\_ -> myExpensiveThing () >> return 0)
-  pokeDevice _ = pokeIO (\_ _ -> myExpensiveThing () >> return ())
+instance IODevice Sheila where
+  range _ = (0xfe00, 0xff00)
+  peekDevice _ _ = myExpensiveThing () >> return 0
+  pokeDevice _ _ _= myExpensiveThing () >> return ()
 
 type Mem = Overlay Sheila RAM
 

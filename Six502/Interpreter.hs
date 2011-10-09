@@ -196,6 +196,8 @@ instance MemorylessMachine (Step mem) where
 
   {-# INLINE cond #-}
   cond (Bit x) p1 p2 = if x == 0 then p1 else p2
+  {-# INLINE condRange #-}
+  condRange addr (l, h) p1 p2 = if fromAddr addr >= l && fromAddr addr < h then p1 else p2
   {-# INLINE case_ #-}
   case_ x f = f (fromByte x)
 

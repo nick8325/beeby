@@ -48,6 +48,7 @@ class Monad m => MemorylessMachine m where
   bitOr :: Bit m -> Bit m -> Bit m
 
   cond :: Bit m -> m a -> m a -> m a
+  condRange :: Addr m -> (Int, Int) -> m a -> m a -> m a
   case_ :: Byte m -> (Int -> m a) -> m a
   register :: Register -> Location m
   flag :: Flag -> m (Bit m)

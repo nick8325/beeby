@@ -12,12 +12,12 @@ class MemorylessMachine m => IOMachine m where
   pokeIO :: (Int -> Word8 -> IO ()) -> Addr m -> Byte m -> m ()
 
 -- A memory-mapped I/O device.
-class IOMachine m => IODevice m a where
-  -- Compute whether a particular address is mapped to the I/O device.
-  visible :: a -> Addr m -> Bit m
+class IODevice a where
+  -- The range of addresses taken by the device.
+  range :: a -> (Int, Int)
   -- Peek or poke the I/O device.
-  peekDevice :: a -> Addr m -> m (Byte m)
-  pokeDevice :: a -> Addr m -> Byte m -> m ()
+  peekDevice :: a -> Int -> IO Word8
+  pokeDevice :: a -> Int -> Word8 -> IO ()
 
 -- An address space.
 class MemorylessMachine m => AddressSpace m a where
@@ -29,13 +29,13 @@ class MemorylessMachine m => AddressSpace m a where
 -- An I/O device overlayed on top of an address space.
 data Overlay a b = Overlay !a !b
 
-instance (IODevice m a, IOMachine m, AddressSpace m b) => AddressSpace m (Overlay a b) where
+instance (IODevice a, IOMachine m, AddressSpace m b) => AddressSpace m (Overlay a b) where
   fetchAddress (Overlay _ mem) = fetchAddress mem
   peekAddress (Overlay dev mem) !addr =
-    cond (visible dev addr)
-      (peekDevice dev addr)
+    condRange addr (range dev)
+      (peekIO (peekDevice dev) addr)
       (peekAddress mem addr)
   pokeAddress (Overlay dev mem) !addr !v =
-    cond (visible dev addr)
-      (pokeDevice dev addr v)
+    condRange addr (range dev)
+      (pokeIO (pokeDevice dev) addr v)
       (pokeAddress mem addr v)
