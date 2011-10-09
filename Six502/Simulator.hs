@@ -1,11 +1,11 @@
-{-# LANGUAGE MagicHash, GeneralizedNewtypeDeriving, BangPatterns, TypeFamilies, Rank2Types, FlexibleInstances, TypeSynonymInstances #-}
+{-# LANGUAGE BangPatterns, TypeFamilies, Rank2Types #-}
 -- A 6502 simulator.
 
 module Six502.Simulator where
 
 import Prelude hiding (abs)
-import GHC.Types
 import GHC.Prim
+import Data.Primitive.ByteArray
 import Six502
 import Control.Monad
 import Data.Word
@@ -15,10 +15,33 @@ import qualified Data.Bits
 import Numeric
 
 class Memory mem where
-  {-# NOINLINE[0] peekMemory #-}
+  visible :: mem -> Int -> Bool
+  fetchMemory :: mem -> Int -> IO Word8
+  fetchMemory = peekMemory
   peekMemory :: mem -> Int -> IO Word8
-  {-# NOINLINE[0] pokeMemory #-}
   pokeMemory :: mem -> Int -> Word8 -> IO ()
+
+newtype RAM = RAM (MutableByteArray RealWorld)
+
+newRAM :: IO RAM
+newRAM = fmap RAM (newByteArray 0x10000)
+
+instance Memory RAM where
+  visible _ _ = True
+  peekMemory (RAM mem) addr = readByteArray mem addr
+  pokeMemory (RAM mem) addr v = writeByteArray mem addr v
+
+data Overlay a b = Overlay !a !b
+
+instance (Memory a, Memory b) => Memory (Overlay a b) where
+  visible (Overlay x y) addr = visible x addr || visible y addr
+  -- Slightly incorrect emulation:
+  -- assume that we never fetch instructions from I/O memory.
+  fetchMemory (Overlay x y) = fetchMemory y
+  peekMemory (Overlay x y) addr | visible x addr = peekMemory x addr
+                                | otherwise = peekMemory y addr
+  pokeMemory (Overlay x y) addr v | visible x addr = pokeMemory x addr v
+                                  | otherwise = pokeMemory y addr v
 
 newtype Step mem a = Step { run0 :: forall b. mem -> (a -> S -> IO b) -> S -> IO b }
 
@@ -201,7 +224,7 @@ instance Memory mem => Machine (Step mem) where
   fetch = do
     addr@(Addr pc) <- loadPC
     m <- mem
-    x <- liftIO (peekMemory m (fromAddr addr))
+    x <- liftIO (fetchMemory m (fromAddr addr))
     storePC (Addr (pc+1))
     return (Byte (fromIntegral x))
 

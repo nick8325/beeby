@@ -1,35 +1,30 @@
-{-# LANGUAGE FlexibleInstances, BangPatterns, TypeSynonymInstances #-}
+{-# LANGUAGE BangPatterns #-}
 import Control.Monad hiding (forever)
 import Six502.Simulator
 import Six502
-import GHC.Prim
 import qualified Data.ByteString as BS
 import System.IO
 import Data.Word
 import Data.Bits hiding (bit, xor)
 import qualified Data.Bits
-import Data.Primitive.ByteArray
 import Numeric
 
-sheila addr = addr >= 0xfe00 && addr < 0xff00
-
-type Mem = MutableByteArray RealWorld
+data Sheila = Sheila
 
 {-# NOINLINE myExpensiveThing #-}
 myExpensiveThing () = return ()
 
-instance Memory Mem where
-  {-# NOINLINE[0] peekMemory #-}
-  peekMemory !mem !addr | not (sheila addr) = readByteArray mem addr
-                        | otherwise = myExpensiveThing () >> return 0
-  {-# NOINLINE[0] pokeMemory #-}
-  pokeMemory !mem !addr !v | not (sheila addr) = writeByteArray mem addr v
-                           | otherwise = myExpensiveThing () >> return ()
+instance Memory Sheila where
+  visible _ addr = addr >= 0xfe00 && addr < 0xff00
+  peekMemory _ addr = myExpensiveThing () >> return 0
+  pokeMemory _ addr v = myExpensiveThing () >> return ()
+
+type Mem = Overlay Sheila RAM
 
 main = do
   rom <- BS.readFile "OS12.ROM"
   basic <- BS.readFile "BASIC2.ROM"
-  arr <- newByteArray 0x10000
+  arr <- newRAM
   let blit str !ofs
         | BS.null str = return ()
         | otherwise = do
@@ -80,4 +75,4 @@ main = do
   fill 0xff 0xfc00 0xfeff
   fill 0x00 0xfe40 0xfe4f
   putStrLn "go"
-  run loop arr s0
+  run loop (Overlay Sheila arr) s0
