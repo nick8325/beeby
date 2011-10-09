@@ -83,15 +83,12 @@ instance Show S where
 s0 :: S
 s0 = S 0 0 0 0 1 1 1 1 1 1 0 0
 
-{-# INLINE fromAddr #-}
 fromAddr :: Addr (Step mem) -> Int
 fromAddr (Addr x) = fromIntegral (fromIntegral x :: Word16)
 
-{-# INLINE fromByte #-}
 fromByte :: Byte (Step mem) -> Int
 fromByte (Byte x) = fromIntegral (fromIntegral x :: Word8)
 
-{-# INLINE fromSignedByte #-}
 fromSignedByte :: Byte (Step mem) -> Int
 fromSignedByte (Byte x) = fromIntegral (fromIntegral x :: Int8)
 
