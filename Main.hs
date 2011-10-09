@@ -2,6 +2,7 @@
 import Control.Monad hiding (forever)
 import Six502.Simulator
 import Six502
+import Six502.Memory
 import qualified Data.ByteString as BS
 import System.IO
 import Data.Word
@@ -14,12 +15,12 @@ data Sheila = Sheila
 {-# NOINLINE myExpensiveThing #-}
 myExpensiveThing () = return ()
 
-instance Memory Sheila where
+instance IOMemory Sheila where
   visible _ addr = addr >= 0xfe00 && addr < 0xff00
   peekMemory _ addr = myExpensiveThing () >> return 0
   pokeMemory _ addr v = myExpensiveThing () >> return ()
 
-type Mem = Overlay Sheila RAM
+type Mem m = Overlay m Sheila (RAM m)
 
 main = do
   rom <- BS.readFile "OS12.ROM"
@@ -68,7 +69,7 @@ main = do
       --     0xffee -> syscall oswrch
       --     0xe0a4 -> syscall oswrch
       --     _ -> return ()
-      loop :: Step Mem ()
+      loop :: Step (Mem (Step mem)) ()
       loop = reset >> forever (dump >> cpu)
   blit basic 0x8000
   blit rom 0xc000

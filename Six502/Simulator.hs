@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns, TypeFamilies, Rank2Types #-}
+{-# LANGUAGE BangPatterns, TypeFamilies, Rank2Types, TypeSynonymInstances #-}
 -- A 6502 simulator.
 
 module Six502.Simulator where
@@ -7,6 +7,7 @@ import Prelude hiding (abs)
 import GHC.Prim
 import Data.Primitive.ByteArray
 import Six502
+import Six502.Memory
 import Control.Monad
 import Data.Word
 import Data.Int
@@ -14,26 +15,23 @@ import Data.Bits hiding (xor, bit)
 import qualified Data.Bits
 import Numeric
 
-class Memory mem where
-  visible :: mem -> Int -> Bool
-  fetchMemory :: mem -> Int -> IO Word8
-  fetchMemory = peekMemory
-  peekMemory :: mem -> Int -> IO Word8
-  pokeMemory :: mem -> Int -> Word8 -> IO ()
+instance MachineMemory (Step mem) where
+  type RAM (Step mem) = StepRAM
+  type Overlay (Step mem) = StepOverlay
 
-newtype RAM = RAM (MutableByteArray RealWorld)
+newtype StepRAM = RAM (MutableByteArray RealWorld)
 
-newRAM :: IO RAM
+newRAM :: IO StepRAM
 newRAM = fmap RAM (newByteArray 0x10000)
 
-instance Memory RAM where
+instance IOMemory StepRAM where
   visible _ _ = True
   peekMemory (RAM mem) addr = readByteArray mem addr
   pokeMemory (RAM mem) addr v = writeByteArray mem addr v
 
-data Overlay a b = Overlay !a !b
+data StepOverlay a b = Overlay !a !b
 
-instance (Memory a, Memory b) => Memory (Overlay a b) where
+instance (IOMemory a, IOMemory b) => IOMemory (StepOverlay a b) where
   visible (Overlay x y) addr = visible x addr || visible y addr
   -- Slightly incorrect emulation:
   -- assume that we never fetch instructions from I/O memory.
@@ -110,7 +108,7 @@ fromByte (Byte x) = fromIntegral (fromIntegral x :: Word8)
 fromSignedByte :: Byte (Step mem) -> Int
 fromSignedByte (Byte x) = fromIntegral (fromIntegral x :: Int8)
 
-instance Memory mem => Machine (Step mem) where
+instance IOMemory mem => Machine (Step mem) where
   -- It simplifies the generated code considerably to let GHC just use Ints everywhere.
   -- We let addresses and bytes be arbitrary integers, i.e., out-of-bounds:
   -- "Byte x" really represents the byte "x `mod` 256".
