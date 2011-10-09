@@ -6,3 +6,4 @@ Build-type: Simple
 Executable bbc
   Main-is: Main.hs
   Build-depends: base >= 4, array, mtl, ghc-prim, bytestring, primitive
+  ghc-options: -fllvm -O2
