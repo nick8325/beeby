@@ -209,11 +209,9 @@ instance MemorylessMachine (Step mem) where
   machineError = error
 
 instance AddressSpace (Step mem) mem => Machine (Step mem) where
-  {-# INLINE memory #-}
   memory addr =
     Location { peek = do { m <- mem; peekAddress m addr },
                poke = \v -> do { m <- mem; pokeAddress m addr v } }
-  {-# INLINE fetch #-}
   fetch = do
     addr@(Addr pc) <- loadPC
     storePC (Addr (pc+1))
