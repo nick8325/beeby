@@ -1,45 +1,30 @@
-{-# LANGUAGE FlexibleInstances, BangPatterns, MagicHash, UnboxedTuples, TypeSynonymInstances, KindSignatures, CPP #-}
+{-# LANGUAGE FlexibleInstances, BangPatterns, TypeSynonymInstances #-}
 import Control.Monad hiding (forever)
 import Six502.Simulator
 import Six502
 import GHC.Prim
-import GHC.Types
-import GHC.Word
 import qualified Data.ByteString as BS
 import System.IO
 import Data.Word
 import Data.Bits hiding (bit, xor)
 import qualified Data.Bits
 import Data.Primitive.ByteArray
+import Numeric
 
 sheila addr = addr >= 0xfe00 && addr < 0xff00
 
 type Mem = MutableByteArray RealWorld
 
--- Nasty stuff: manually do worker/wrapper transform while NOINLINEing the worker.
-#define BARRIER(FROM, TO) \
-  (\m -> \
-  let { \
-      {-# NOINLINE worker #-}; \
-      worker world = \
-        let IO f = m in \
-        case f world of FROM -> TO } in \
-  IO (\world -> case worker world of TO -> FROM))
-
-{-# INLINE peekMemory1 #-}
-peekMemory1 :: Mem -> Int -> IO Word8
-peekMemory1 mem addr | not (sheila addr) = readByteArray mem addr
-                     | otherwise = return 0
-
-{-# INLINE pokeMemory1 #-}
-pokeMemory1 :: Mem -> Int -> Word8 -> IO ()
-pokeMemory1 mem addr v | not (sheila addr) = writeByteArray mem addr v
-                       | otherwise = return ()
+{-# NOINLINE myExpensiveThing #-}
+myExpensiveThing () = return ()
 
 instance Memory Mem where
-  fetchMemory mem addr = readByteArray mem addr
-  peekMemory !mem !addr = BARRIER((# w, W8# x #), (# w, x #)) (peekMemory1 mem addr)
-  pokeMemory !mem !addr !v = BARRIER((# w, () #), w) (writeByteArray mem addr v)
+  {-# NOINLINE[0] peekMemory #-}
+  peekMemory !mem !addr | not (sheila addr) = readByteArray mem addr
+                        | otherwise = myExpensiveThing () >> return 0
+  {-# NOINLINE[0] pokeMemory #-}
+  pokeMemory !mem !addr !v | not (sheila addr) = writeByteArray mem addr v
+                           | otherwise = myExpensiveThing () >> return ()
 
 main = do
   rom <- BS.readFile "OS12.ROM"

@@ -1,4 +1,4 @@
-{-# LANGUAGE MagicHash, GeneralizedNewtypeDeriving, BangPatterns, TypeFamilies, Rank2Types #-}
+{-# LANGUAGE MagicHash, GeneralizedNewtypeDeriving, BangPatterns, TypeFamilies, Rank2Types, FlexibleInstances, TypeSynonymInstances #-}
 -- A 6502 simulator.
 
 module Six502.Simulator where
@@ -15,19 +15,20 @@ import qualified Data.Bits
 import Numeric
 
 class Memory mem where
-  fetchMemory :: mem -> Int -> IO Word8
+  {-# NOINLINE[0] peekMemory #-}
   peekMemory :: mem -> Int -> IO Word8
+  {-# NOINLINE[0] pokeMemory #-}
   pokeMemory :: mem -> Int -> Word8 -> IO ()
 
-newtype Step mem a = Step { run0 :: forall b. mem -> (a -> Sf (IO b)) -> Sf (IO b) }
+newtype Step mem a = Step { run0 :: forall b. mem -> (a -> S -> IO b) -> S -> IO b }
 
 run :: Step mem a -> mem -> S -> IO (a, S)
-run x !mem !state = apply (run0 x mem (\ !res -> abs (\ !state' -> return (res, state')))) state
+run x !mem !state = run0 x mem (\ res state' -> return (res, state')) state
 
 instance Monad (Step mem) where
-  return x = Step (\ !_ k -> abs (\s -> apply (k x) s))
+  return x = Step (\ !_ k !s -> k x s)
   x >>= f =
-    Step (\ !m k -> run0 x m (\y -> run0 (f y) m k))
+    Step (\ !m k !s -> run0 x m (\y -> run0 (f y) m k) s)
 
 forever :: Step mem () -> Step mem ()
 forever x = Step (\ !m _ ->
@@ -35,16 +36,16 @@ forever x = Step (\ !m _ ->
                    in k)
 
 mem :: Step mem mem
-mem = Step (\ !m k -> k m)
+mem = Step (\ !m k s -> k m s)
 
 gets :: (S -> a) -> Step mem a
-gets f = Step (\ !m k -> abs (\s -> apply (k (f s)) s))
+gets f = Step (\ !m k s -> k (f s) s)
 
 modify :: (S -> S) -> Step mem ()
-modify f = Step (\ !_ k -> abs (\s -> apply (k ()) (f s)))
+modify f = Step (\ !_ k s -> k () (f s))
 
 liftIO :: IO a -> Step mem a
-liftIO x = Step (\ !_ !k -> abs (\s -> x >>= \x' -> apply (k x') s))
+liftIO x = Step (\ !_ k s -> x >>= \x' -> k x' s)
 
 data S = S {
   rA, rX, rY, rStack :: {-# UNPACK #-} !Int,
@@ -73,18 +74,6 @@ instance Show S where
 
 s0 :: S
 s0 = S 0 0 0 0 1 1 1 1 1 1 0 0
-
-type Sf a = Int# -> Int# -> Int# -> Int# ->
-            Int# -> Int# -> Int# -> Int# -> Int# -> Int# ->
-            Int# -> Int# -> a
-{-# INLINE apply #-}
-apply :: Sf a -> S -> a
-apply func (S (I# a) (I# b) (I# c) (I# d) (I# e) (I# f) (I# g) (I# h) (I# i) (I# j) (I# k) (I# l))
-  = func a b c d e f g h i j k l
-{-# INLINE abs #-}
-abs :: (S -> a) -> Sf a
-abs func a b c d e f g h i j k l
-  = func (S (I# a) (I# b) (I# c) (I# d) (I# e) (I# f) (I# g) (I# h) (I# i) (I# j) (I# k) (I# l))
 
 {-# INLINE fromAddr #-}
 fromAddr :: Addr (Step mem) -> Int
@@ -212,7 +201,7 @@ instance Memory mem => Machine (Step mem) where
   fetch = do
     addr@(Addr pc) <- loadPC
     m <- mem
-    x <- liftIO (fetchMemory m (fromAddr addr))
+    x <- liftIO (peekMemory m (fromAddr addr))
     storePC (Addr (pc+1))
     return (Byte (fromIntegral x))
 
