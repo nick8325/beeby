@@ -337,14 +337,8 @@ cpu = fetch >>= flip case_ decode
         -- unknown
         decode x = machineError $ "unknown opcode " ++ show x
 
-        -- We mark absolutely every higher-order function for inlining,
-        -- so as to straighten the control flow out.
-        -- This includes functions that are parametrised on a register
-        -- or a flag, because they have totally different control flow depending
-        -- on which register or flag we choose.
-        -- However, we often don't annotate first-order functions with
-        -- INLINE. We refuse to inline the BCD routines because
-        -- people with good taste wouldn't use them.
+        -- We mark for inlining every function that is parametrised on
+        -- a register or location or flag, so as to straighten the control flow out.
 
         ldaMem = ldMem A
         ldxMem = ldMem X
@@ -387,7 +381,6 @@ cpu = fetch >>= flip case_ decode
                 oneBit 6 b6 `add`
                 oneBit 7 b7)
 
-        {-# INLINE plp #-}
         plp = do
           x <- pop
           setFlag Negative (selectBit 7 x)
@@ -534,7 +527,6 @@ cpu = fetch >>= flip case_ decode
           pc <- pop16
           storePC (pc `index` byte 2)
 
-        {-# INLINE zeroNeg #-}
         zeroNeg v = do
           setFlag Zero (zero v)
           setFlag Negative (selectBit 7 v)
