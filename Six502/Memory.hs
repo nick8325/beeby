@@ -30,11 +30,14 @@ class MemorylessMachine m => AddressSpace m a where
 data Overlay a b = Overlay a b
 
 instance (IODevice a, IOMachine m, AddressSpace m b) => AddressSpace m (Overlay a b) where
+  {-# INLINE fetchAddress #-}
   fetchAddress (Overlay _ mem) = fetchAddress mem
+  {-# INLINE[0] peekAddress #-}
   peekAddress (Overlay dev mem) !addr =
     condRange addr (range dev)
       (peekIO (peekDevice dev) addr)
       (peekAddress mem addr)
+  {-# INLINE[0] pokeAddress #-}
   pokeAddress (Overlay dev mem) !addr !v =
     condRange addr (range dev)
       (pokeIO (pokeDevice dev) addr v)

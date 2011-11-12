@@ -21,11 +21,15 @@ newRAM :: IO RAM
 newRAM = newByteArray 0x10000
 
 instance AddressSpace (Step mem) RAM where
+  {-# INLINE peekAddress #-}
   peekAddress mem = peekIO (readByteArray mem)
+  {-# INLINE pokeAddress #-}
   pokeAddress mem = pokeIO (writeByteArray mem)
 
 instance IOMachine (Step mem) where
+  {-# INLINE peekIO #-}
   peekIO f addr = liftM (Byte . fromIntegral) (liftIO (f (fromAddr addr)))
+  {-# INLINE pokeIO #-}
   pokeIO f addr (Byte v) = liftIO (f (fromAddr addr) (fromIntegral v))
 
 newtype Step mem a = Step { run0 :: forall b. mem -> (a -> S -> IO b) -> S -> IO b }
