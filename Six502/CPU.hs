@@ -3,7 +3,7 @@
 -- The point of this parametrisation is so that we can
 -- use the same code for interpreting and JITting.
 
-{-# LANGUAGE BangPatterns, TypeFamilies, MultiParamTypeClasses, FunctionalDependencies #-}
+{-# LANGUAGE BangPatterns, TypeFamilies #-}
 module Six502.CPU where
 
 import Control.Monad
@@ -130,7 +130,8 @@ indirectY = do
 {-# INLINE cpu #-}
 cpu :: Machine m => m ()
 cpu = fetch >>= flip case_ decode
-  where -- LDA
+  where {-# INLINE decode #-}
+        -- LDA
         decode 0xa9 = do { tick 2; imm >>= ld A }
         decode 0xa5 = do { tick 3; zp >>= ldaMem }
         decode 0xb5 = do { tick 4; zpRel X >>= ldaMem }
@@ -337,11 +338,11 @@ cpu = fetch >>= flip case_ decode
         -- unknown
         decode x = machineError $ "unknown opcode " ++ show x
 
-        -- We mark for inlining every function that is parametrised on
-        -- a register or location or flag, so as to straighten the control flow out.
-
+        {-# INLINE ldaMem #-}
         ldaMem = ldMem A
+        {-# INLINE ldxMem #-}
         ldxMem = ldMem X
+        {-# INLINE ldyMem #-}
         ldyMem = ldMem Y
         {-# INLINE ldMem #-}
         ldMem r addr = peek (memory addr) >>= ld r
@@ -350,21 +351,25 @@ cpu = fetch >>= flip case_ decode
           poke (register r) v
           zeroNeg v
 
+        {-# INLINE sta #-}
         sta = st A
+        {-# INLINE stx #-}
         stx = st X
+        {-# INLINE sty #-}
         sty = st Y
 
         {-# INLINE st #-}
         st r addr = do
           x <- peek (register r)
           poke (memory addr) x
-          
+
         {-# INLINE transfer #-}
         transfer r1 r2 = do
           x <- peek (register r1)
           poke (register r2) x
           zeroNeg x
 
+        {-# INLINE php #-}
         php break = do
           b7 <- flag Negative
           b6 <- flag Overflow
@@ -381,6 +386,7 @@ cpu = fetch >>= flip case_ decode
                 oneBit 6 b6 `add`
                 oneBit 7 b7)
 
+        {-# INLINE plp #-}
         plp = do
           x <- pop
           setFlag Negative (selectBit 7 x)
@@ -390,8 +396,11 @@ cpu = fetch >>= flip case_ decode
           setFlag Zero (selectBit 1 x)
           setFlag Carry (selectBit 0 x)
 
+        {-# INLINE andMem #-}
         andMem = accMem and_
+        {-# INLINE orMem #-}
         orMem = accMem or_
+        {-# INLINE xorMem #-}
         xorMem = accMem xor
 
         {-# INLINE accMem #-}
@@ -402,6 +411,7 @@ cpu = fetch >>= flip case_ decode
           poke (register A) (x `op` y)
           zeroNeg (x `op` y)
 
+        {-# INLINE bitTest #-}
         bitTest addr = do
           x <- peek (register A)
           y <- peek (memory addr)
@@ -409,20 +419,21 @@ cpu = fetch >>= flip case_ decode
           setFlag Negative (selectBit 7 y)
           setFlag Overflow (selectBit 6 y)
 
+        {-# INLINE adcMem #-}
         adcMem addr = peek (memory addr) >>= adc
         {-# INLINE adc #-}
         adc x = do
           f <- flag Decimal
           cond f (adcBCD x) (adcNormal (register A) x)
-          
-        {-# NOINLINE adcBCD #-}
+
+        {-# INLINE[0] adcBCD #-}
         adcBCD x = adcNormal l (fromBCD x)
           where l = Location {
                   peek = liftM fromBCD (peek (register A)),
                   poke = \v -> do
                    poke (register A) (toBCD v)
                    setFlag Carry (geq v (byte 100)) }
-          
+
         {-# INLINE adcNormal #-}
         adcNormal l x = do
           c <- flag Carry
@@ -437,13 +448,14 @@ cpu = fetch >>= flip case_ decode
           -- in BCD mode
           poke l z
 
+        {-# INLINE sbcMem #-}
         sbcMem addr = peek (memory addr) >>= sbc
         {-# INLINE sbc #-}
         sbc x = do
           f <- flag Decimal
           cond f (sbcBCD x) (adcNormal (register A) (xor x (byte (-1))))
 
-        {-# NOINLINE sbcBCD #-}
+        {-# INLINE[0] sbcBCD #-}
         sbcBCD x = adcNormal l (xor (fromBCD x) (byte (-1)))
           where l = Location {
                   peek = liftM fromBCD (peek (register A)),
@@ -458,7 +470,9 @@ cpu = fetch >>= flip case_ decode
           adcNormal (register r) (xor x (byte (-1)))
           poke (register r) y
 
+        {-# INLINE incMem #-}
         incMem = inc . memory
+        {-# INLINE decMem #-}
         decMem = dec . memory
 
         {-# INLINE inc #-}
@@ -471,9 +485,13 @@ cpu = fetch >>= flip case_ decode
           poke l (x `add` y)
           zeroNeg (x `add` y)
 
+        {-# INLINE aslMem #-}
         aslMem = asl . memory
+        {-# INLINE lsrMem #-}
         lsrMem = lsr . memory
+        {-# INLINE rolMem #-}
         rolMem = rol . memory
+        {-# INLINE rorMem #-}
         rorMem = ror . memory
 
         {-# INLINE asl #-}
@@ -484,7 +502,7 @@ cpu = fetch >>= flip case_ decode
         rol l = flag Carry >>= rotate l leftRotate
         {-# INLINE ror #-}
         ror l = flag Carry >>= rotate l rightRotate
-        
+
         {-# INLINE rotate #-}
         rotate l f c = do
           x <- peek l
@@ -492,12 +510,13 @@ cpu = fetch >>= flip case_ decode
           poke l x'
           setFlag Carry c'
           zeroNeg x'
-        
+
         {-# INLINE leftRotate #-}
         leftRotate x c = (shl x `add` oneBit 0 c, selectBit 7 x)
         {-# INLINE rightRotate #-}
         rightRotate x c = (shr x `add` oneBit 7 c, selectBit 0 x)
 
+        {-# INLINE jsr #-}
         jsr addr = do
           pc <- loadPC
           push16 (pc `signedIndex` byte (-1))
@@ -508,13 +527,14 @@ cpu = fetch >>= flip case_ decode
           v <- flag f
           addr <- relative
           cond v (storePC addr) (return ())
-          
+
         {-# INLINE branchNot #-}
         branchNot f = do
           v <- flag f
           addr <- relative
           cond v (return ()) (storePC addr)
 
+        {-# INLINE brk #-}
         brk = do
           pc <- loadPC
           push16 (pc `signedIndex` byte (-1))
@@ -522,11 +542,13 @@ cpu = fetch >>= flip case_ decode
           pc' <- peek16 (address 0xfffe)
           storePC pc'
 
+        {-# INLINE rti #-}
         rti = do
           plp
           pc <- pop16
           storePC (pc `index` byte 2)
 
+        {-# INLINE zeroNeg #-}
         zeroNeg v = do
           setFlag Zero (zero v)
           setFlag Negative (selectBit 7 v)

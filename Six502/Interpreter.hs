@@ -139,7 +139,7 @@ instance MemorylessMachine (Step mem) where
   eq x y = Bit (fromByte x `Data.Bits.xor` fromByte y)
   {-# INLINE geq #-}
   geq x y = Bit ((fromByte x - fromByte y) .&. minBound)
-  
+
   {-# INLINE add #-}
   add (Byte x) (Byte y) = Byte (x + y)
   {-# INLINE carry #-}
@@ -161,19 +161,19 @@ instance MemorylessMachine (Step mem) where
   bitOr _ (Bit y) = Bit y
 
   {-# INLINE register #-}
-  register A = 
+  register A =
     Location { peek = gets (Byte . rA),
                poke = \(Byte x) -> modify (\s -> s { rA = x }) }
 
-  register X = 
+  register X =
     Location { peek = gets (Byte . rX),
                poke = \(Byte x) -> modify (\s -> s { rX = x }) }
 
-  register Y = 
+  register Y =
     Location { peek = gets (Byte . rY),
                poke = \(Byte x) -> modify (\s -> s { rY = x }) }
 
-  register Stack = 
+  register Stack =
     Location { peek = gets (Byte . rStack),
                poke = \(Byte x) -> modify (\s -> s { rStack = x }) }
 
@@ -212,9 +212,11 @@ instance MemorylessMachine (Step mem) where
   machineError = error
 
 instance AddressSpace (Step mem) mem => Machine (Step mem) where
+  {-# INLINE memory #-}
   memory addr =
     Location { peek = do { m <- mem; peekAddress m addr },
                poke = \v -> do { m <- mem; pokeAddress m addr v } }
+  {-# INLINE fetch #-}
   fetch = do
     addr@(Addr pc) <- loadPC
     storePC (Addr (pc+1))

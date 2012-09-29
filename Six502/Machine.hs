@@ -19,7 +19,7 @@ class Monad m => MemorylessMachine m where
   data Addr m
   data Byte m
   data Bit m
-  
+
   address :: Int -> Addr m
   index :: Addr m -> Byte m -> Addr m
   signedIndex :: Addr m -> Byte m -> Addr m
@@ -41,7 +41,7 @@ class Monad m => MemorylessMachine m where
   carry :: Byte m -> Byte m -> Bit m
   toBCD :: Byte m -> Byte m
   fromBCD :: Byte m -> Byte m
-  
+
   and_ :: Byte m -> Byte m -> Byte m
   or_ :: Byte m -> Byte m -> Byte m
   xor :: Byte m -> Byte m -> Byte m
