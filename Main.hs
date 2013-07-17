@@ -13,17 +13,7 @@ import Data.Bits hiding (bit, xor)
 import qualified Data.Bits
 import Numeric
 import Data.Primitive.ByteArray
-
-data Sheila = Sheila
-
-{-# NOINLINE myExpensiveThing #-}
-myExpensiveThing :: () -> IO ()
-myExpensiveThing () = return ()
-
-instance IODevice Sheila where
-  range _ = (0xfe00, 0xff00)
-  peekDevice _ _ = myExpensiveThing () >> return 0
-  pokeDevice _ _ _= myExpensiveThing () >> return ()
+import BBC.Sheila
 
 type Mem = Overlay Sheila RAM
 
@@ -65,17 +55,17 @@ main = do
       osbyte 0x83 = poke (register X) (byte 0) >> poke (register Y) (byte 0xe) >> rts
       osbyte 0x84 = poke (register X) (byte 0) >> poke (register Y) (byte 0x80) >> rts
       oswrch c = liftIO (putChar (toEnum c) >> hFlush stdout) >> rts
-      -- {-# INLINE hook #-}
-      -- hook = do
-      --   pc <- liftM fromAddr loadPC
-      --   case pc of
-      --     0xfff1 -> syscall osword
-      --     0xfff4 -> syscall osbyte
-      --     0xffee -> syscall oswrch
-      --     0xe0a4 -> syscall oswrch
-      --     _ -> return ()
+      {-# INLINE hook #-}
+      hook = do
+        pc <- liftM fromAddr loadPC
+        case pc of
+          0xfff1 -> syscall osword
+          0xfff4 -> syscall osbyte
+          0xffee -> syscall oswrch
+          0xe0a4 -> syscall oswrch
+          _ -> return ()
       loop :: Step Mem ()
-      loop = reset >> forever (dump >> cpu)
+      loop = reset >> forever (hook >> cpu)
   blit basic 0x8000
   blit rom 0xc000
   fill 0xff 0xfc00 0xfeff
