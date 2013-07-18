@@ -416,8 +416,9 @@ cpu = fetch >>= flip case_ decode
           x <- peek (register A)
           y <- peek (memory addr)
           let z = x `and_` y
-          zeroNeg z
-          setFlag Overflow (selectBit 6 z)
+          setFlag Zero (zero z)
+          setFlag Negative (selectBit 7 y)
+          setFlag Overflow (selectBit 6 y)
 
         {-# INLINE adcMem #-}
         adcMem addr = peek (memory addr) >>= adc
