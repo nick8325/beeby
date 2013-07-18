@@ -369,23 +369,6 @@ cpu = fetch >>= flip case_ decode
           poke (register r2) x
           zeroNeg x
 
-        {-# INLINE php #-}
-        php break = do
-          b7 <- flag Negative
-          b6 <- flag Overflow
-          b3 <- flag Decimal
-          b2 <- flag InterruptDisable
-          b1 <- flag Zero
-          b0 <- flag Carry
-          push (oneBit 0 b0 `add`
-                oneBit 1 b1 `add`
-                oneBit 2 b2 `add`
-                oneBit 3 b3 `add`
-                oneBit 4 break `add`
-                oneBit 5 (bit True) `add`
-                oneBit 6 b6 `add`
-                oneBit 7 b7)
-
         {-# INLINE plp #-}
         plp = do
           x <- pop
@@ -536,12 +519,7 @@ cpu = fetch >>= flip case_ decode
           cond v (return ()) (storePC addr)
 
         {-# INLINE brk #-}
-        brk = do
-          pc <- loadPC
-          push16 (pc `signedIndex` byte (-1))
-          php (bit True)
-          pc' <- peek16 (address 0xfffe)
-          storePC pc'
+        brk = interrupt True
 
         {-# INLINE rti #-}
         rti = do
@@ -561,3 +539,35 @@ reset = do
   setFlag InterruptDisable (bit True)
   setFlag Decimal (bit False)
   poke (register Stack) (byte 0xff)
+
+{-# INLINE irq #-}
+irq :: Machine m => m ()
+irq = interrupt False
+
+{-# INLINE interrupt #-}
+interrupt :: Machine m => Bool -> m ()
+interrupt software = do
+  pc <- loadPC
+  push16 (pc `signedIndex` byte (-1))
+  php (bit software)
+  setFlag InterruptDisable (bit True)
+  pc' <- peek16 (address 0xfffe)
+  storePC pc'
+
+{-# INLINE php #-}
+php :: Machine m => Bit m -> m ()
+php break = do
+  b7 <- flag Negative
+  b6 <- flag Overflow
+  b3 <- flag Decimal
+  b2 <- flag InterruptDisable
+  b1 <- flag Zero
+  b0 <- flag Carry
+  push (oneBit 0 b0 `add`
+        oneBit 1 b1 `add`
+        oneBit 2 b2 `add`
+        oneBit 3 b3 `add`
+        oneBit 4 break `add`
+        oneBit 5 (bit True) `add`
+        oneBit 6 b6 `add`
+        oneBit 7 b7)
