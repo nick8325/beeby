@@ -13,7 +13,7 @@ import Data.Word
 import Data.Int
 import Data.Bits hiding (xor, bit)
 import qualified Data.Bits
-import Numeric
+import Text.Printf
 
 type RAM = MutableByteArray RealWorld
 
@@ -76,20 +76,17 @@ data S = S {
 
 instance Show S where
   show s =
-    show (ticks s) ++ " " ++
-    showReg "A" rA ++
-    showReg "X" rX ++
-    showReg "Y" rY ++
-    showReg "SP" rStack ++
+    printf "A=%02x X=%02x Y=%02x SP=%02x PC=%04x %10d"
+      (reg rA) (reg rX) (reg rY)
+      (reg rStack) (pc s `mod` 0x10000) (ticks s) ++
     showFlag "CF" fCarry ++
     showFlag "ZF" fZero ++
     showFlag "IF" fInterruptDisable ++
     showFlag "DF" fDecimal ++
     showFlag "OF" fOverflow ++
-    showFlag "NF" fNegative ++
-    "PC=" ++ showHex (pc s `mod` 65536) ""
-      where showReg name r = name ++ "=" ++ showHex (r s `mod` 256) " "
-            showFlag name f | f s /= 0 = name ++ " "
+    showFlag "NF" fNegative
+      where reg r = r s `mod` 256
+            showFlag name f | f s /= 0 = " " ++ name
                             | otherwise = ""
 
 s0 :: S
