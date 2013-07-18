@@ -5,6 +5,7 @@ module Six502.Memory where
 
 import Six502.Machine
 import Data.Word
+import qualified Data.ByteString as BS
 
 -- A machine that can do memory-mapped I/O.
 class MemorylessMachine m => IOMachine m where
@@ -42,3 +43,19 @@ instance (IODevice a, IOMachine m, AddressSpace m b) => AddressSpace m (Overlay 
     condRange addr (range dev)
       (pokeIO (pokeDevice dev) addr v)
       (pokeAddress mem addr v)
+
+-- Utilities for writing to memory.
+
+{-# INLINE blit #-}
+blit :: IODevice a => a -> Int -> BS.ByteString -> IO ()
+blit mem = aux
+  where
+    aux !ofs str
+      | BS.null str = return ()
+      | otherwise = do
+        pokeDevice mem ofs (fromIntegral (BS.head str) :: Word8)
+        aux (ofs+1) (BS.tail str)
+
+{-# INLINE fill #-}
+fill :: IODevice a => a -> Int -> Int -> Word8 -> IO ()
+fill mem from to w = blit mem from (BS.replicate (to - from) w)

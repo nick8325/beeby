@@ -14,7 +14,6 @@ import Data.Int
 import Data.Bits hiding (xor, bit)
 import qualified Data.Bits
 import Numeric
-import qualified Data.ByteString as BS
 
 type RAM = MutableByteArray RealWorld
 
@@ -24,19 +23,10 @@ newRAM = do
   fill ram 0 0x10000 0xff
   return ram
 
-{-# INLINE blit #-}
-blit :: RAM -> Int -> BS.ByteString -> IO ()
-blit ram = aux
-  where
-    aux !ofs str
-      | BS.null str = return ()
-      | otherwise = do
-        writeByteArray ram ofs (fromIntegral (BS.head str) :: Word8)
-        aux (ofs+1) (BS.tail str)
-
-{-# INLINE fill #-}
-fill :: RAM -> Int -> Int -> Word8 -> IO ()
-fill ram from to w = blit ram from (BS.replicate (to - from) w)
+instance IODevice RAM where
+  range _ = (0, 0x10000)
+  peekDevice = readByteArray
+  pokeDevice = writeByteArray
 
 instance AddressSpace (Step mem) RAM where
   {-# INLINE peekAddress #-}
