@@ -9,6 +9,7 @@ import Data.Word
 import Codec.PPM
 import Data.Primitive.ByteArray
 import Data.Bits
+import Control.Monad
 
 type Memory = Overlay Sheila RAM
 
@@ -47,7 +48,13 @@ pokeVideoRegister value addr = do
     _ -> return ()
 
 dumpScreen :: RAM -> IO ()
-dumpScreen ram = writePPM "bitmap" (320, 256) =<< pixels
+dumpScreen ram = do
+  writePPM "bitmap" (320, 256) =<< pixels
+  forM_ [0..24] $ \row -> do
+    forM_ [0..39] $ \col -> do
+      c <- readByteArray ram (0x7c00 + row*40 + col) :: IO Word8
+      putStr [toEnum (fromEnum c)]
+    putStrLn ""
   where
     pixels = fmap (map toPixel) . sequence $
              [ pixel row col | row <- [0..255], col <- [0..319] ]
@@ -66,6 +73,8 @@ dumpScreen ram = writePPM "bitmap" (320, 256) =<< pixels
 peekSheila :: Sheila -> Int -> IO Word8
 peekSheila sheila addr =
   case addr of
+    _ | addr >= 0xfe40 && addr < 0xfe50 -> return 0
+    _ | addr >= 0xfe60 && addr < 0xfe70 -> return 0
     0xfe01 -> readIORef (videoRegister sheila) >>= peekVideoRegister
     0xfe30 -> readIORef (pagedROM sheila)
     _ -> do

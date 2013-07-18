@@ -12,7 +12,7 @@ import Numeric
 hook ram = do
   pc <- liftM fromAddr loadPC
   let syscall f = liftM fromByte (peek (register A)) >>= liftIO . f
-      osword 0 = putStrLn "read line"
+      osword 0 = putStrLn "read line" >> dumpScreen ram
       osbyte 0x83 = putStrLn "83"
       osbyte 0x84 = putStrLn "84"
       oswrch f = putStrLn $ "wrch " ++ showHex f ""
@@ -26,7 +26,7 @@ hook ram = do
     0xe0c3 -> syscall oswrch2
     _ -> return ()
   n <- gets ticks
-  when (n >= 1000000) $ do
+  when (n >= 10000000) $ do
     liftIO (dumpScreen ram)
     liftM fromByte (peek (memory (address 0x27c))) >>= liftIO . print
     error "Finished!"
