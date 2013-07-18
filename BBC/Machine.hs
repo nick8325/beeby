@@ -7,7 +7,6 @@ import Numeric
 import Data.IORef
 import Data.Word
 import Codec.PPM
-import Data.Primitive.ByteArray
 import Data.Bits
 import Control.Monad
 
@@ -52,7 +51,7 @@ dumpScreen ram = do
   writePPM "bitmap" (320, 256) =<< pixels
   forM_ [0..24] $ \row -> do
     forM_ [0..39] $ \col -> do
-      c <- readByteArray ram (0x7c00 + row*40 + col) :: IO Word8
+      c <- peekDevice ram (0x7c00 + row*40 + col)
       putStr [toEnum (fromEnum c)]
     putStrLn ""
   where
@@ -66,7 +65,7 @@ dumpScreen ram = do
           rowMaj = row `div` 8
           rowMin = row `mod` 8
           idx = rowMaj * 320 + colMaj * 8 + rowMin
-      val <- readByteArray ram (0x5800 + idx) :: IO Word8
+      val <- peekDevice ram (0x5800 + idx)
       return (testBit val (7 - colMin))
 
 {-# NOINLINE peekSheila #-}
