@@ -15,18 +15,31 @@ type Memory = Overlay Sheila RAM
 
 data Sheila = Sheila {
   ram :: RAM,
-  pagedROM :: Register Word8
+  dispatch :: Int -> Register Word8
   }
 
 newSheila :: RAM -> IO Sheila
 newSheila ram = do
   basicROM <- BS.readFile "BASIC2.ROM"
+
   pagedROM <- newPagedROM ram $ \n ->
     case n of
       15 -> basicROM
       _ -> BS.replicate 0x4000 0xff
-  videoRegister <- newIORef 0
-  return (Sheila ram pagedROM)
+
+  (videoAddr, videoData) <- switch 0 $ \addr ->
+    unknown "video register" addr
+
+  let dispatch 0xfe30 = pagedROM
+      dispatch 0xfe00 = videoAddr
+      dispatch 0xfe01 = videoData
+      dispatch addr = unknown "address" addr
+
+  return (Sheila ram dispatch)
+
+unknown xs addr =
+  writeOnlyRegister 0 $ \val ->
+    printf "Write of %02x to unknown %s %04x\n" val xs addr
 
 data Register a = Register {
   readRegister :: IO a,
@@ -40,6 +53,13 @@ register x = do
     readRegister = readIORef r,
     writeRegister = writeIORef r
     }
+
+switch :: a -> (a -> Register b) -> IO (Register a, Register b)
+switch def select = do
+  reg <- register def
+  let read = readRegister reg >>= readRegister . select
+      write val = readRegister reg >>= flip writeRegister val . select
+  return (reg, Register read write)
 
 afterWrite :: Register a -> (a -> IO ()) -> Register a
 afterWrite reg act = reg { writeRegister = \val -> writeRegister reg val >> act val }
@@ -62,12 +82,6 @@ newPagedROM ram select =
   activeRegister 0 $ \bank -> do
     putStrLn $ "Load paged ROM " ++ show bank
     blit ram 0x8000 (select bank)
-
-dispatch :: Sheila -> Int -> Register Word8
-dispatch sheila 0xfe30 = pagedROM sheila
-dispatch _ addr =
-  writeOnlyRegister 0 $ \val ->
-    printf "Write of %02x to unknown address %04x\n" val addr
 
 peekVideoRegister :: Word8 -> IO Word8
 peekVideoRegister addr = do
