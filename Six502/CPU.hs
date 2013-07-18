@@ -415,9 +415,9 @@ cpu = fetch >>= flip case_ decode
         bitTest addr = do
           x <- peek (register A)
           y <- peek (memory addr)
-          setFlag Zero (x `eq` y)
-          setFlag Negative (selectBit 7 y)
-          setFlag Overflow (selectBit 6 y)
+          let z = x `and_` y
+          zeroNeg z
+          setFlag Overflow (selectBit 6 z)
 
         {-# INLINE adcMem #-}
         adcMem addr = peek (memory addr) >>= adc
