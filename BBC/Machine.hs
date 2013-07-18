@@ -9,30 +9,65 @@ import Data.Word
 import Codec.PPM
 import Data.Bits
 import Control.Monad
+import Text.Printf
 
 type Memory = Overlay Sheila RAM
 
 data Sheila = Sheila {
   ram :: RAM,
-  basicROM :: BS.ByteString,
-  pagedROM :: IORef Word8,
-  videoRegister :: IORef Word8
+  pagedROM :: Register Word8
   }
 
 newSheila :: RAM -> IO Sheila
 newSheila ram = do
   basicROM <- BS.readFile "BASIC2.ROM"
-  pagedROM <- newIORef 0
+  pagedROM <- newPagedROM ram $ \n ->
+    case n of
+      15 -> basicROM
+      _ -> BS.replicate 0x4000 0xff
   videoRegister <- newIORef 0
-  return (Sheila ram basicROM pagedROM videoRegister)
+  return (Sheila ram pagedROM)
 
-pokePagedROM :: Sheila -> Word8 -> IO ()
-pokePagedROM sheila n = do
-  writeIORef (pagedROM sheila) n
-  putStrLn $ "Load paged ROM " ++ show n
-  case n of
-    15 -> blit (ram sheila) 0x8000 (basicROM sheila)
-    _ -> fill (ram sheila) 0x8000 0xc000 0xff
+data Register a = Register {
+  readRegister :: IO a,
+  writeRegister :: a -> IO ()
+  }
+
+register :: a -> IO (Register a)
+register x = do
+  r <- newIORef x
+  return Register {
+    readRegister = readIORef r,
+    writeRegister = writeIORef r
+    }
+
+afterWrite :: Register a -> (a -> IO ()) -> Register a
+afterWrite reg act = reg { writeRegister = \val -> writeRegister reg val >> act val }
+
+constRegister :: a -> Register a
+constRegister def = Register { readRegister = return def, writeRegister = const (return ()) }
+
+activeRegister :: a -> (a -> IO ()) -> IO (Register a)
+activeRegister def act = do
+  act def
+  reg <- register def
+  return (reg `afterWrite` act)
+
+writeOnlyRegister :: a -> (a -> IO ()) -> Register a
+writeOnlyRegister def act =
+  constRegister def `afterWrite` act
+
+newPagedROM :: RAM -> (Word8 -> BS.ByteString) -> IO (Register Word8)
+newPagedROM ram select =
+  activeRegister 0 $ \bank -> do
+    putStrLn $ "Load paged ROM " ++ show bank
+    blit ram 0x8000 (select bank)
+
+dispatch :: Sheila -> Int -> Register Word8
+dispatch sheila 0xfe30 = pagedROM sheila
+dispatch _ addr =
+  writeOnlyRegister 0 $ \val ->
+    printf "Write of %02x to unknown address %04x\n" val addr
 
 peekVideoRegister :: Word8 -> IO Word8
 peekVideoRegister addr = do
@@ -70,28 +105,12 @@ dumpScreen ram = do
 
 {-# NOINLINE peekSheila #-}
 peekSheila :: Sheila -> Int -> IO Word8
-peekSheila sheila addr =
-  case addr of
-    _ | addr >= 0xfe40 && addr < 0xfe50 -> return 0
-    _ | addr >= 0xfe60 && addr < 0xfe70 -> return 0
-    0xfe01 -> readIORef (videoRegister sheila) >>= peekVideoRegister
-    0xfe30 -> readIORef (pagedROM sheila)
-    _ -> do
-      putStrLn (showHex addr "")
-      return 0xff
+peekSheila sheila addr = readRegister (dispatch sheila addr)
 
 {-# NOINLINE pokeSheila #-}
 pokeSheila :: Sheila -> Int -> Word8 -> IO ()
 pokeSheila sheila addr value =
-  case addr of
-    _ | addr >= 0xfe40 && addr < 0xfe50 -> return ()
-    _ | addr >= 0xfe60 && addr < 0xfe70 -> return ()
-    0xfe00 -> writeIORef (videoRegister sheila) value
-    0xfe01 -> readIORef (videoRegister sheila) >>= pokeVideoRegister value
-    0xfe30 -> pokePagedROM sheila value
-    _ -> do
-      putStrLn (showHex addr "" ++ " <- " ++ showHex value "")
-      return ()
+  writeRegister (dispatch sheila addr) value
 
 instance IODevice Sheila where
   range _ = (0xfe00, 0xff00)
