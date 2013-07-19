@@ -5,5 +5,5 @@ Build-type: Simple
 
 Executable bbc
   Main-is: Main.hs
-  Build-depends: base >= 4, array, ghc-prim, bytestring, primitive
+  Build-depends: base >= 4, array, ghc-prim, bytestring, primitive, AC-PPM
   ghc-options: -fllvm -O -fspec-constr -fspec-constr-threshold=1 -fsimpl-tick-factor=10000 -fwarn-unused-imports

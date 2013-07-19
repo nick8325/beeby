@@ -35,13 +35,13 @@ dumpScreen ram = do
       return (testBit val (7 - colMin))
 
 main = do
-  machine@Machine{ram = ram} <- newMachine
+  machine <- newMachine
   sheila <- newSheila machine
   system <- newSystem
   after system 100000000 $ do
     replicateM 10 $ do
       cpu
       gets id >>= liftIO . print
---    liftIO (dumpScreen ram)
+    liftIO (dumpScreen (ram machine))
     return (Just ())
-  run (reset >> execute system cpu) (Overlay sheila ram) s0
+  run (reset >> execute system cpu) (Overlay sheila (ram machine)) s0
