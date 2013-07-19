@@ -11,6 +11,7 @@ import Control.Monad hiding (forever)
 import Six502.Machine
 import Codec.PPM
 import Data.Bits
+import Driver.Video
 
 dumpScreen :: RAM -> IO ()
 dumpScreen ram = do
@@ -35,7 +36,8 @@ dumpScreen ram = do
       return (testBit val (7 - colMin))
 
 main = do
-  machine <- newMachine
+  videoDriver <- newVideoDriver
+  machine <- newMachine videoDriver
   sheila <- newSheila machine
   system <- newSystem
   after system 100000000 $ do
