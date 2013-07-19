@@ -50,11 +50,14 @@ instance Monad (Step mem) where
   x >>= f =
     Step (\ !m k !s -> run0 x m (\y -> run0 (f y) m k) s)
 
-forever :: (a -> Step mem a) ->
-           a -> Step mem ()
-forever act x0 =
-  Step (\ !m _ ->
-         let k x = run0 (act x) m k
+loop :: (a -> Step mem (Either a b)) ->
+        a -> Step mem b
+loop act x0 =
+  Step (\ !m k0 ->
+         let k x = run0 (act x) m f
+             {-# INLINE f #-}
+             f (Left x) = k x
+             f (Right x) = k0 x
          in k x0)
 
 mem :: Step mem mem

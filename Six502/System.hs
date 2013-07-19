@@ -9,22 +9,22 @@ import Six502.Machine
 import Six502.Interpreter
 import Data.Int
 
-type System mem = IORef (Queue mem)
+type System mem a = IORef (Queue mem a)
 
 -- Representation: the Int is a time *delta*:
 -- how long after the previous event this event fires.
 -- The event handler gets given the current absolute time as a parameter
 -- (used in after_).
-data Queue mem = After {-# UNPACK #-} !Int64 (Int64 -> Step mem ()) (Queue mem)
+data Queue mem a = After {-# UNPACK #-} !Int64 (Int64 -> Step mem (Maybe a)) (Queue mem a)
 
 {-# INLINE nil #-}
-nil :: Queue mem
+nil :: Queue mem a
 nil = aux
   where
     -- Do nothing, every so often :)
-    aux = After maxBound (\_ -> return ()) aux
+    aux = After maxBound (\_ -> return Nothing) aux
 
-insert :: Int64 -> Step mem () -> Queue mem -> Queue mem
+insert :: Int64 -> Step mem (Maybe a) -> Queue mem a -> Queue mem a
 insert time act (After time' act' q)
   | time < time' =
     After time (\_ -> act) (After (time' - time) act' q)
@@ -37,7 +37,7 @@ atomicModifyIORef'' ref f =
 
 -- Schedule an event to happen when the *absolute time*
 -- reaches a certain value.
-after :: System mem -> Int64 -> Step mem () -> IO ()
+after :: System mem a -> Int64 -> Step mem (Maybe a) -> IO ()
 after ref time act =
   -- Problem: we don't know the current time, and don't
   -- want to force the step code to maintain it in an IORef.
@@ -45,29 +45,32 @@ after ref time act =
   -- That event receives the current time, and its handler will
   -- schedule the real event.
   atomicModifyIORef'' ref $
-    After 0 $ \now ->
+    After 0 $ \now -> do
       liftIO $
         atomicModifyIORef'' ref $
           insert ((time - now) `max` 0) act
+      return Nothing
 
 {-# INLINE execute #-}
 -- Run the system.
-execute :: System mem -> Step mem () -> Step mem ()
+execute :: System mem a -> Step mem () -> Step mem a
 execute ref cpu = do
   n <- currentTicks
-  forever aux n
+  loop aux n
   where
     aux !n0 = do
       !n1 <- currentTicks
       After delta _ _ <- liftIO (readIORef ref)
       if n0 + delta <= n1 then do
         After delta act _ <- liftIO (atomicModifyIORef' ref (\q@(After _ _ q') -> (q', q)))
-        act n1
-        return (n0 + delta)
+        x <- act n1
+        case x of
+          Nothing -> return (Left (n0 + delta))
+          Just y -> return (Right y)
        else do
         cpu
-        return n0
+        return (Left n0)
 
 {-# INLINE newSystem #-}
-newSystem :: IO (System mem)
+newSystem :: IO (System mem a)
 newSystem = newIORef nil

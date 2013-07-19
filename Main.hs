@@ -34,8 +34,6 @@ dumpScreen ram = do
       val <- peekDevice ram (0x5800 + idx)
       return (testBit val (7 - colMin))
 
-x `inRange` (y, z) = x >= y && x <= z
-
 main = do
   machine@Machine{ram = ram} <- newMachine
   sheila <- newSheila machine
@@ -45,5 +43,5 @@ main = do
       cpu
       gets id >>= liftIO . print
 --    liftIO (dumpScreen ram)
-    error "Finished!"
+    return (Just ())
   run (reset >> execute system cpu) (Overlay sheila ram) s0
