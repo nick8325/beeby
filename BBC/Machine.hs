@@ -6,17 +6,19 @@ import qualified Data.ByteString as BS
 import Data.Word
 import BBC.Register
 import BBC.PagedROM
+import BBC.Video
+import Driver.Video
 
 data Machine = Machine {
   ram :: RAM,
   pagedROM :: Register Word8,
-  videoIO :: Word8 -> Register Word8
+  videoChip :: VideoChip
   }
 
-newMachine :: IO Machine
-newMachine = do
+newMachine :: VideoDriver -> IO Machine
+newMachine videoDriver = do
   ram <- newRAM
   pagedROM <- newSinglePagedROM ram =<< BS.readFile "BASIC2.ROM"
   blit ram 0xc000 =<< BS.readFile "OS12.ROM"
-  let videoIO = unknownRegister "video address"
-  return (Machine ram pagedROM videoIO)
+  videoChip <- newVideoChip videoDriver
+  return (Machine ram pagedROM videoChip)

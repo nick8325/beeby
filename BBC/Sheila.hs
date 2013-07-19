@@ -3,6 +3,7 @@ module BBC.Sheila where
 
 import BBC.Machine
 import BBC.Register
+import BBC.Video
 import Six502.Memory
 import Data.Word
 
@@ -26,7 +27,7 @@ instance IODevice Sheila where
 
 newSheila :: Machine -> IO Sheila
 newSheila machine = do
-  (videoAddr, videoData) <- switch 0 (videoIO machine)
+  (videoAddr, videoData) <- switch 0 (videoIO (videoChip machine))
 
   let dispatch 0xfe30 = pagedROM machine
       dispatch 0xfe00 = videoAddr
