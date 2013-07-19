@@ -55,7 +55,7 @@ after ref time act =
 execute :: System mem -> Step mem () -> Step mem ()
 execute ref cpu = do
   n <- currentTicks
-  aux n
+  forever aux n
   where
     aux !n0 = do
       !n1 <- currentTicks
@@ -63,10 +63,10 @@ execute ref cpu = do
       if n0 + delta <= n1 then do
         After delta act _ <- liftIO (atomicModifyIORef' ref (\q@(After _ _ q') -> (q', q)))
         act n1
-        aux (n0 + delta)
+        return (n0 + delta)
        else do
         cpu
-        aux n0
+        return n0
 
 {-# INLINE newSystem #-}
 newSystem :: IO (System mem)
