@@ -71,7 +71,7 @@ data S = S {
   rA, rX, rY, rStack :: {-# UNPACK #-} !Int,
   fCarry, fZero, fInterruptDisable, fDecimal, fOverflow, fNegative :: {-# UNPACK #-} !Int,
   pc :: {-# UNPACK #-} !Int,
-  ticks :: {-# UNPACK #-} !Int
+  ticks :: {-# UNPACK #-} !Int64
   }
 
 instance Show S where
@@ -212,6 +212,7 @@ instance MemorylessMachine (Step mem) where
 
   {-# INLINE tick #-}
   tick !n = modify (\s -> s { ticks = ticks s+n })
+  currentTicks = gets ticks
 
   {-# INLINE machineError #-}
   machineError = error

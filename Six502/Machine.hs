@@ -4,6 +4,8 @@
 {-# LANGUAGE TypeFamilies #-}
 module Six502.Machine where
 
+import Data.Int
+
 -- A location: something you can peek or poke.
 data Location m =
   Location { peek :: m (Byte m),
@@ -56,7 +58,8 @@ class Monad m => MemorylessMachine m where
   loadPC :: m (Addr m)
   storePC :: Addr m -> m ()
 
-  tick :: Int -> m ()
+  tick :: Int64 -> m ()
+  currentTicks :: m Int64
   machineError :: String -> m a
 
 class MemorylessMachine m => Machine m where
