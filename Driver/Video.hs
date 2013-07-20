@@ -14,13 +14,15 @@ type VideoDriver = Chan Image
 data Image = Image {
   width :: Int,
   height :: Int,
-  -- pixel format: pixel (i,j) is at i+j*width,
-  -- 0xRRGGBB
-  pixels :: UArray Int Word32
+  palette :: [Colour],
+  -- left to right, top to bottom
+  pixels :: UArray Int Word8
   }
-type Surf = (Surface, Surface)
+data Colour = Colour {
+  red, green, blue :: Word8
+  }
 
-videoServer :: (Image -> IO Surf) -> Chan Image -> IO ()
+videoServer :: (Image -> IO Surface) -> Chan Image -> IO ()
 videoServer getSurface chan = do
   image <- readChan chan
   surface <- getSurface image
@@ -31,19 +33,20 @@ videoServer getSurface chan = do
         | otherwise = return surface
   videoServer getSurface' chan
 
-newSurface :: Image -> IO Surf
-newSurface Image { width = width, height = height } = do
-  screen <- setVideoMode width height 32 [SWSurface]
-  rgb <- createRGBSurface [] width height 32 0xff0000 0xff00 0xff 0
-  return (screen, rgb)
+newSurface :: Image -> IO Surface
+newSurface Image { width = width, height = height } =
+  setVideoMode width height 8 []
 
-drawImage :: Surf -> Image -> IO ()
-drawImage (screen, rgb) image = do
-  buf <- fmap castPtr (surfaceGetPixels rgb)
+drawImage :: Surface -> Image -> IO ()
+drawImage surface image = do
+  lockSurface surface
+  let toColor (Colour r g b) = Color r g b
+  setColors surface (map toColor (palette image)) 0
+  buf <- fmap castPtr (surfaceGetPixels surface)
   forM_ [0..height image*width image-1] $ \x ->
       pokeElemOff buf x (pixels image `unsafeAt` x)
-  blitSurface rgb Nothing screen Nothing
-  Graphics.UI.SDL.flip screen
+  unlockSurface surface
+  Graphics.UI.SDL.flip surface
   return ()
 
 newVideoDriver :: IO VideoDriver
@@ -56,10 +59,12 @@ draw :: VideoDriver -> Image -> IO ()
 draw = writeChan
 
 -- testing
-img = Image 640 480 arr
+pal = [Colour (i*5) (i*3) (i*11) | i <- [0..255] ]
+
+img = Image 640 480 pal arr
 arr = array (0, 640*480-1) [(i, fromIntegral i) | i <- [0..640*480-1]]
 
-img' = Image 640 480 arr'
-arr' = array (0, 640*480-1) [(i, fromIntegral (640*480-1-i)) | i <- [0..640*480-1]]
+img' = Image 640 480 pal arr'
+arr' = array (0, 640*480-1) [(i, fromIntegral (-i)) | i <- [0..640*480-1]]
 
 go n vd = replicateM_ n (draw vd img >> draw vd img')
