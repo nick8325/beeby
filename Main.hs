@@ -36,13 +36,12 @@ dumpScreen ram = do
 
 main = do
   videoDriver <- newVideoDriver
-  system <- newSystem
-  machine <- newMachine videoDriver system
-  every system 2000000 $ do
+  machine <- newMachine videoDriver
+  every (system machine) 2000000 $ do
     replicateM 10 $ do
       cpu
       gets id >>= liftIO . print
     liftIO (dumpScreen (ram machine))
     return Nothing
-  after system 100000000 $ return (Just ())
-  run (reset >> execute system cpu) (Overlay (sheila machine) (ram machine)) s0
+  after (system machine) 100000000 $ return (Just ())
+  runMachine machine

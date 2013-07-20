@@ -1,5 +1,6 @@
 module BBC.Machine where
 
+import Six502.CPU
 import Six502.Interpreter
 import Six502.Memory
 import Six502.System
@@ -10,8 +11,9 @@ import BBC.PagedROM
 import BBC.Video
 import Driver.Video
 
-data Machine = Machine {
+data Machine a = Machine {
   ram :: RAM,
+  system :: System (Overlay Sheila RAM) a,
   pagedROM :: Register Word8,
   videoChip :: VideoChip,
   sheila :: Sheila
@@ -35,8 +37,9 @@ instance IODevice Sheila where
   peekDevice sheila addr = peekSheila sheila addr
   pokeDevice sheila addr value = pokeSheila sheila addr value
 
-newMachine :: VideoDriver -> System mem a -> IO Machine
-newMachine videoDriver system = do
+newMachine :: VideoDriver -> IO (Machine a)
+newMachine videoDriver = do
+  system <- newSystem
   ram <- newRAM
   pagedROM <- newSinglePagedROM ram =<< BS.readFile "BASIC2.ROM"
   blit ram 0xc000 =<< BS.readFile "OS12.ROM"
@@ -49,4 +52,10 @@ newMachine videoDriver system = do
       dispatch 0xfe01 = videoData
       dispatch addr = unknownRegister "address" addr
 
-  return (Machine ram pagedROM videoChip (Sheila dispatch))
+  return (Machine ram system pagedROM videoChip (Sheila dispatch))
+
+runMachine :: Machine a -> IO a
+runMachine machine =
+  fmap fst
+    (run (reset >> execute (system machine) cpu)
+      (Overlay (sheila machine) (ram machine)) s0)
