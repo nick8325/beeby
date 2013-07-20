@@ -3,9 +3,9 @@ module BBC.Machine where
 import Six502.CPU
 import Six502.Interpreter
 import Six502.Memory
-import Six502.System
 import qualified Data.ByteString as BS
 import Data.Word
+import BBC.CPU
 import BBC.Register
 import BBC.PagedROM
 import BBC.Video
@@ -13,7 +13,7 @@ import Driver.Video
 
 data Machine a = Machine {
   ram :: RAM,
-  system :: System (Overlay Sheila RAM) a,
+  cpu :: CPU (Overlay Sheila RAM) a,
   pagedROM :: Register Word8,
   videoChip :: VideoChip,
   sheila :: Sheila
@@ -39,11 +39,11 @@ instance IODevice Sheila where
 
 newMachine :: VideoDriver -> IO (Machine a)
 newMachine videoDriver = do
-  system <- newSystem
+  cpu <- newCPU
   ram <- newRAM
   pagedROM <- newSinglePagedROM ram =<< BS.readFile "BASIC2.ROM"
   blit ram 0xc000 =<< BS.readFile "OS12.ROM"
-  videoChip <- newVideoChip videoDriver system ram
+  videoChip <- newVideoChip videoDriver cpu ram
 
   -- Construct SHEILA
   (videoAddr, videoData) <- switch 0 (videoIO videoChip)
@@ -52,10 +52,10 @@ newMachine videoDriver = do
       dispatch 0xfe01 = videoData
       dispatch addr = unknownRegister "address" addr
 
-  return (Machine ram system pagedROM videoChip (Sheila dispatch))
+  return (Machine ram cpu pagedROM videoChip (Sheila dispatch))
 
 runMachine :: Machine a -> IO a
 runMachine machine =
   fmap fst
-    (run (reset >> execute (system machine) cpu)
+    (run (reset >> runCPU (cpu machine) step)
       (Overlay (sheila machine) (ram machine)) s0)

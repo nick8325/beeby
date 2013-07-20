@@ -3,7 +3,7 @@ module Main(main) where
 
 import Six502.Interpreter
 import Six502.CPU
-import Six502.System
+import BBC.CPU
 import BBC.Machine
 import Six502.Memory
 import Control.Monad hiding (forever)
@@ -36,11 +36,11 @@ dumpScreen ram = do
 main = do
   videoDriver <- newVideoDriver
   machine <- newMachine videoDriver
-  every (system machine) 2000000 $ do
+  every (cpu machine) 2000000 $ do
     replicateM 10 $ do
-      cpu
+      step
       gets id >>= liftIO . print
     liftIO (dumpScreen (ram machine))
     return Nothing
-  after (system machine) 100000000 $ return (Just ())
+  after (cpu machine) 100000000 $ return (Just ())
   runMachine machine

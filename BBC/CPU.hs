@@ -1,8 +1,9 @@
--- Connect the 6502 up to a full computer. Provides support for
--- external interrupts and so on.
+-- Simulate a 6502 in the "real world".
+-- Takes the pure 6502 simulator, and adds asynchronous interrupts,
+-- timed events (e.g. screen refresh) and real time.
 
 {-# LANGUAGE BangPatterns #-}
-module Six502.System where
+module BBC.CPU where
 
 import Data.IORef
 import Control.Monad
@@ -12,11 +13,21 @@ import Data.Int
 import Data.Word
 import Graphics.UI.SDL.Time
 
-type System mem a = IORef (Queue mem a)
+clockSpeed :: Int64
+clockSpeed = 2000000
 
--- Representation: the Int is a time *delta*:
--- how long after the previous event this event fires.
-data Queue mem a = After {-# UNPACK #-} !Int64 (Step mem (Maybe a)) (Queue mem a)
+ticksToMs, msToTicks :: Int64 -> Int64
+ticksToMs n = n `div` 2000
+msToTicks n = n * 2000
+
+type CPU mem a = IORef (Queue mem a)
+-- An event can return a Just to stop the simulation.
+type Event mem a = Step mem (Maybe a)
+
+-- A queue of events that will occur in the future.
+-- The Int64 is a time *delta*:
+-- how many ticks after the previous event this event fires.
+data Queue mem a = After {-# UNPACK #-} !Int64 (Event mem a) (Queue mem a)
 
 {-# INLINE nil #-}
 nil :: Queue mem a
@@ -25,7 +36,7 @@ nil = aux
     -- Do nothing, every so often :)
     aux = After maxBound (return Nothing) aux
 
-insert :: Int64 -> Step mem (Maybe a) -> Queue mem a -> Queue mem a
+insert :: Int64 -> Event mem a -> Queue mem a -> Queue mem a
 insert time act (After time' act' q)
   | time < time' =
     After time act (After (time' - time) act' q)
@@ -37,12 +48,12 @@ atomicModifyIORef'' ref f =
   atomicModifyIORef' ref (\x -> (f x, ()))
 
 -- Interrupt the processor to perform an action.
-interrupt :: System mem a -> Step mem (Maybe a) -> IO ()
+interrupt :: CPU mem a -> Event mem a -> IO ()
 interrupt ref act = atomicModifyIORef'' ref (After 0 act)
 
 -- Schedule an event to happen when the *absolute time*
--- reaches a certain value.
-after :: System mem a -> Int64 -> Step mem (Maybe a) -> IO ()
+-- (measured in clock ticks) reaches a certain value.
+after :: CPU mem a -> Int64 -> Event mem a -> IO ()
 after ref time act =
   -- Interrupt the processor to find the current time,
   -- so that we know when to schedule the event.
@@ -53,7 +64,7 @@ after ref time act =
     return Nothing
 
 -- Schedule a regular event.
-every :: System mem a -> Int64 -> Step mem (Maybe a) -> IO ()
+every :: CPU mem a -> Int64 -> Event mem a -> IO ()
 every ref delta act = interrupt ref reschedule
   where
     reschedule = do
@@ -67,10 +78,10 @@ waitUntil t = do
   -- handle wraparound
   when (t - t0 < 0x80000000) (delay (t - t0))
 
-{-# INLINE execute #-}
--- Run the system.
-execute :: System mem a -> Step mem () -> Step mem a
-execute ref cpu = do
+{-# INLINE runCPU #-}
+-- Run the processor.
+runCPU :: CPU mem a -> Step mem () -> Step mem a
+runCPU ref cpu = do
   n <- currentTicks
   t <- liftIO getTicks
   let
@@ -89,6 +100,6 @@ execute ref cpu = do
         return (Left n0)
   loop aux n
 
-{-# INLINE newSystem #-}
-newSystem :: IO (System mem a)
-newSystem = newIORef nil
+{-# INLINE newCPU #-}
+newCPU :: IO (CPU mem a)
+newCPU = newIORef nil

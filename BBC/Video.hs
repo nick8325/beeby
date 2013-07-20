@@ -2,7 +2,7 @@
 module BBC.Video where
 
 import BBC.Register
-import Six502.System
+import BBC.CPU
 import Six502.Interpreter
 import Driver.Video
 import Data.Word
@@ -44,8 +44,8 @@ drawFrame :: VideoDriver -> RAM -> Word16 -> Word8 ->
              Array Word8 Word8 -> Array Word8 Word8 -> IO ()
 drawFrame _ _ _ _ _ _ = return ()
 
-newVideoChip :: VideoDriver -> System mem a -> RAM -> IO VideoChip
-newVideoChip videoDriver system ram = do
+newVideoChip :: VideoDriver -> CPU mem a -> RAM -> IO VideoChip
+newVideoChip videoDriver cpu ram = do
   videoMemory <- register 0
   videoControl <- register 0
 
@@ -61,7 +61,7 @@ newVideoChip videoDriver system ram = do
   let videoIO n | inRange (bounds registers) n = registers ! n
                 | otherwise = unknownRegister "video register" n
 
-  every system 40000 . liftIO $ do
+  every cpu 40000 . liftIO $ do
     videoMemoryVal <- readRegister videoMemory
     videoControlVal <- readRegister videoControl
     paletteArr <- freeze palette

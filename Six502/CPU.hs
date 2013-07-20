@@ -127,9 +127,9 @@ indirectY = do
   y <- peek (register Y)
   return (addr `index` y)
 
-{-# INLINE cpu #-}
-cpu :: Machine m => m ()
-cpu = fetch >>= flip case_ decode
+{-# INLINE step #-}
+step :: Machine m => m ()
+step = fetch >>= flip case_ decode
   where {-# INLINE decode #-}
         -- LDA
         decode 0xa9 = do { tick 2; imm >>= ld A }
