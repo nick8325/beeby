@@ -5,7 +5,6 @@ import Six502.Interpreter
 import Six502.CPU
 import Six502.System
 import BBC.Machine
-import BBC.Sheila
 import Six502.Memory
 import Control.Monad hiding (forever)
 import Six502.Machine
@@ -39,7 +38,6 @@ main = do
   videoDriver <- newVideoDriver
   system <- newSystem
   machine <- newMachine videoDriver system
-  sheila <- newSheila machine
   every system 2000000 $ do
     replicateM 10 $ do
       cpu
@@ -47,4 +45,4 @@ main = do
     liftIO (dumpScreen (ram machine))
     return Nothing
   after system 100000000 $ return (Just ())
-  run (reset >> execute system cpu) (Overlay sheila (ram machine)) s0
+  run (reset >> execute system cpu) (Overlay (sheila machine) (ram machine)) s0
