@@ -42,7 +42,26 @@ toPalette flashOn n
 
 drawFrame :: VideoDriver -> RAM -> Word16 -> Word8 ->
              Array Word8 Word8 -> Array Word8 Word8 -> IO ()
-drawFrame _ _ _ _ _ _ = return ()
+drawFrame videoDriver ram baseAddr control palette registers =
+  return ()
+  where
+    horizRes = registers ! 1
+    vertRes = registers ! 6
+    charHeight = registers ! 9
+    screenAddr = ((registers ! 12) * 0x100 + registers ! 13) * 8
+    cursor = ((registers ! 10) .&. 0x1f, registers ! 11)
+    cursorPosition = (registers ! 14) * 0x100 + registers ! 15
+    cursorBlink = (registers ! 10) `testBit` 6
+    cursorFast = (registers ! 10) `testBit` 5
+    flashSelect = control `testBit` 0
+    teletext = control `testBit` 1
+    -- XXX what's diff between this and horizRes?
+    charsPerLine = 10 * ((control .&. 0xc) `shiftR` 2)
+    -- XXX what the hell does this do?
+    clockRate = control `testBit` 4
+    cursor1 = control `testBit` 7
+    cursor2 = control `testBit` 6
+    cursor34 = control `testBit` 5
 
 newVideoChip :: VideoDriver -> CPU mem a -> RAM -> IO VideoChip
 newVideoChip videoDriver cpu ram = do
