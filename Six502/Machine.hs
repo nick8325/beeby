@@ -12,7 +12,7 @@ data Location m =
              poke :: Byte m -> m () }
 
 -- The 6502's registers and flags.
-data Flag = Carry | Zero | InterruptDisable | Decimal | Overflow | Negative
+data Flag = Carry | Zero | InterruptDisable | Decimal | Overflow | Negative | IRQ
 data Register = A | X | Y | Stack
 
 -- The machine monad: a set of combinators for describing the processor.

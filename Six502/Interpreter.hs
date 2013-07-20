@@ -74,7 +74,7 @@ liftIO x = Step (\ !_ k s -> x >>= \x' -> k x' s)
 
 data S = S {
   rA, rX, rY, rStack :: {-# UNPACK #-} !Int,
-  fCarry, fZero, fInterruptDisable, fDecimal, fOverflow, fNegative :: {-# UNPACK #-} !Int,
+  fCarry, fZero, fInterruptDisable, fDecimal, fOverflow, fNegative, fIRQ :: {-# UNPACK #-} !Int,
   pc :: {-# UNPACK #-} !Int,
   ticks :: {-# UNPACK #-} !Int64
   }
@@ -89,13 +89,14 @@ instance Show S where
     showFlag "IF" fInterruptDisable ++
     showFlag "DF" fDecimal ++
     showFlag "OF" fOverflow ++
-    showFlag "NF" fNegative
+    showFlag "NF" fNegative ++
+    showFlag "IRQ" fIRQ
       where reg r = r s `mod` 256
             showFlag name f | f s /= 0 = " " ++ name
                             | otherwise = ""
 
 s0 :: S
-s0 = S 0 0 0 0 1 1 1 1 1 1 0 0
+s0 = S 0 0 0 0 1 1 1 1 1 1 0 0 0
 
 fromAddr :: Addr (Step mem) -> Int
 fromAddr (Addr x) = fromIntegral (fromIntegral x :: Word16)
@@ -194,6 +195,7 @@ instance MemorylessMachine (Step mem) where
   flag Decimal = gets (Bit . fDecimal)
   flag Overflow = gets (Bit . fOverflow)
   flag Negative = gets (Bit . fNegative)
+  flag IRQ = gets (Bit . fIRQ)
 
   {-# INLINE setFlag #-}
   setFlag Carry (Bit x) = modify (\s -> s { fCarry = x })
@@ -202,6 +204,7 @@ instance MemorylessMachine (Step mem) where
   setFlag Decimal (Bit x) = modify (\s -> s { fDecimal = x })
   setFlag Overflow (Bit x) = modify (\s -> s { fOverflow = x })
   setFlag Negative (Bit x) = modify (\s -> s { fNegative = x })
+  setFlag IRQ (Bit x) = modify (\s -> s { fIRQ = x })
 
   {-# INLINE loadPC #-}
   loadPC = gets (Addr . pc)

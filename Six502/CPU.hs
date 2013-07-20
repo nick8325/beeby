@@ -325,7 +325,7 @@ step = fetch >>= flip case_ decode
     -- flag instructions
     decode 0x18 = do { tick 2; setFlag Carry (bit False) }
     decode 0xd8 = do { tick 2; setFlag Decimal (bit False) }
-    decode 0x58 = do { tick 2; setFlag InterruptDisable (bit False) }
+    decode 0x58 = do { tick 2; setFlag InterruptDisable (bit False); checkIRQ }
     decode 0xb8 = do { tick 2; setFlag Overflow (bit False) }
     decode 0x38 = do { tick 2; setFlag Carry (bit True) }
     decode 0xf8 = do { tick 2; setFlag Decimal (bit True) }
@@ -379,6 +379,7 @@ step = fetch >>= flip case_ decode
       setFlag InterruptDisable (selectBit 2 x)
       setFlag Zero (selectBit 1 x)
       setFlag Carry (selectBit 0 x)
+      checkIRQ
 
     {-# INLINE andMem #-}
     andMem = accMem and_
@@ -545,7 +546,20 @@ reset = do
 
 {-# INLINE irq #-}
 irq :: Machine m => m ()
-irq = interrupt False
+irq = do
+  setFlag IRQ (bit True)
+  checkIRQ
+
+{-# INLINE checkIRQ #-}
+checkIRQ :: Machine m => m ()
+checkIRQ = do
+  irq <- flag IRQ
+  interruptsDisabled <- flag InterruptDisable
+  cond irq
+    (cond interruptsDisabled
+      (return ())
+      (setFlag IRQ (bit False) >> interrupt False))
+    (return ())
 
 {-# INLINE interrupt #-}
 interrupt :: Machine m => Bool -> m ()
