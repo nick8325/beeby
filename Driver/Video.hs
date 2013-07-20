@@ -6,7 +6,6 @@ import Data.Array.Base
 import Data.Word
 import Graphics.UI.SDL
 import Control.Concurrent
-import Control.Concurrent.Chan
 import Foreign
 import Control.Monad
 

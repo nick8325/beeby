@@ -7,7 +7,6 @@ import Six502.System
 import BBC.Machine
 import Six502.Memory
 import Control.Monad hiding (forever)
-import Six502.Machine
 import Codec.PPM
 import Data.Bits
 import Driver.Video
