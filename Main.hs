@@ -37,9 +37,9 @@ dumpScreen ram = do
 
 main = do
   videoDriver <- newVideoDriver
-  machine <- newMachine videoDriver
-  sheila <- newSheila machine
   system <- newSystem
+  machine <- newMachine videoDriver system
+  sheila <- newSheila machine
   every system 2000000 $ do
     replicateM 10 $ do
       cpu

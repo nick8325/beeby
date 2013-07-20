@@ -2,10 +2,15 @@
 module BBC.Video where
 
 import BBC.Register
+import Six502.System
+import Six502.Interpreter
 import Driver.Video
 import Data.Word
+import Data.Array
 import Data.Array.IO
 import Data.Bits
+import Control.Monad
+import qualified Data.Traversable as T
 
 data VideoChip = VideoChip {
   videoIO :: Word8 -> Register Word8,
@@ -35,11 +40,13 @@ toPalette flashOn n
   | flashOn = 15 - n
   | otherwise = n - 8
 
-newVideoChip :: VideoDriver -> IO VideoChip
-newVideoChip videoDriver = do
-  let videoIO = unknownRegister "video address"
+drawFrame :: VideoDriver -> RAM -> Word16 -> Word8 ->
+             Array Word8 Word8 -> Array Word8 Word8 -> IO ()
+drawFrame _ _ _ _ _ _ = return ()
+
+newVideoChip :: VideoDriver -> System mem a -> RAM -> IO VideoChip
+newVideoChip videoDriver system ram = do
   videoMemory <- register 0
-  videoAddress <- register 0
   videoControl <- register 0
 
   palette <- newArray (0, 15) 0 :: IO (IOUArray Word8 Word8)
@@ -47,5 +54,20 @@ newVideoChip videoDriver = do
         let logical = val .&. 0xf
             physical = val `shiftR` 4
         in writeArray palette logical physical
+
+  registers <-
+    fmap (listArray (0, 17))
+      (replicateM 18 (register 0))
+  let videoIO n | inRange (bounds registers) n = registers ! n
+                | otherwise = unknownRegister "video register" n
+
+  every system 40000 . liftIO $ do
+    videoMemoryVal <- readRegister videoMemory
+    videoControlVal <- readRegister videoControl
+    paletteArr <- freeze palette
+    registerValues <- T.mapM readRegister registers
+    drawFrame videoDriver ram videoMemoryVal videoControlVal
+      paletteArr registerValues
+    return Nothing
 
   return (VideoChip videoIO videoMemory videoControl paletteControl)
