@@ -5,9 +5,12 @@
 module Six502.System where
 
 import Data.IORef
+import Control.Monad
 import Six502.Machine
 import Six502.Interpreter
 import Data.Int
+import Data.Word
+import Graphics.UI.SDL.Time
 
 type System mem a = IORef (Queue mem a)
 
@@ -51,18 +54,25 @@ after ref time act =
           insert ((time - now) `max` 0) act
       return Nothing
 
+waitUntil :: Word32 -> IO ()
+waitUntil t = do
+  t0 <- getTicks
+  -- handle wraparound
+  when (t > t0 + 0x80000000) (delay (t - t0))
+
 {-# INLINE execute #-}
 -- Run the system.
 execute :: System mem a -> Step mem () -> Step mem a
 execute ref cpu = do
   n <- currentTicks
-  loop aux n
-  where
+  t <- liftIO getTicks
+  let
     aux !n0 = do
       !n1 <- currentTicks
       After delta _ _ <- liftIO (readIORef ref)
       if n0 + delta <= n1 then do
         After delta act _ <- liftIO (atomicModifyIORef' ref (\q@(After _ _ q') -> (q', q)))
+        liftIO (waitUntil (t + fromIntegral ((n0 + delta - n) `div` 2000)))
         x <- act n1
         case x of
           Nothing -> return (Left (n0 + delta))
@@ -70,6 +80,7 @@ execute ref cpu = do
        else do
         cpu
         return (Left n0)
+  loop aux n
 
 {-# INLINE newSystem #-}
 newSystem :: IO (System mem a)
