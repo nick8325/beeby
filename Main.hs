@@ -40,10 +40,11 @@ main = do
   machine <- newMachine videoDriver
   sheila <- newSheila machine
   system <- newSystem
-  after system 100000000 $ do
+  every system 2000000 $ do
     replicateM 10 $ do
       cpu
       gets id >>= liftIO . print
     liftIO (dumpScreen (ram machine))
-    return (Just ())
+    return Nothing
+  after system 100000000 $ return (Just ())
   run (reset >> execute system cpu) (Overlay sheila (ram machine)) s0
